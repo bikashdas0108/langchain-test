@@ -1,327 +1,328 @@
-// index.js
 import { OpenAI } from "openai";
 import { StateGraph } from "@langchain/langgraph";
 import readline from "readline/promises";
-import { stdin as input, stdout as output } from "process";
-import { wrapOpenAI } from "langsmith/wrappers";
-import dotenv from "dotenv";
+import process from "process";
 import { traceable } from "langsmith/traceable";
+import dotenv from "dotenv";
 
 dotenv.config();
 
 // Initialize OpenAI
-const openai = wrapOpenAI(
-  new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  })
-);
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-// mock database
-const mockInterviewsDB = {
+// Enhanced mock database
+const mockDB = {
   interviews: [
     {
-      id: "int_sample1",
+      id: "int_1",
       company: "TechCorp",
       date: "2023-12-15",
       time: "10:00 AM",
-      position: "Software Developer Intern",
+      position: "Software Developer",
       status: "scheduled",
     },
     {
-      id: "int_sample2",
+      id: "int_2",
       company: "DataSystems",
       date: "2023-12-18",
       time: "2:30 PM",
-      position: "Data Analyst Intern",
+      position: "Data Analyst",
       status: "scheduled",
     },
   ],
 };
 
-// Helper functions with better error handling
-const extractInterviewDetails = traceable((query) => {
-  try {
-    const dateMatch = query.match(
-      /(\d{1,2}\/\d{1,2}\/\d{4})|(\w+ \d{1,2},? \d{4})/
-    );
-    const timeMatch = query.match(/(\d{1,2}:\d{2} [AP]M)|(\d{1,2}[AP]M)/);
-    const companyMatch =
-      query.match(/with ([\w\s]+?)(?: on| at| for|$)/i) ||
-      query.match(/at ([\w\s]+?)(?: on| at| for|$)/i) ||
-      query.match(/for ([\w\s]+?)(?: on| at| for|$)/i);
-    const positionMatch = query.match(/for ([\w\s]+? intern)/i);
-
-    return {
-      date: dateMatch?.[0] || "tomorrow",
-      time: timeMatch?.[0] || "10:00 AM",
-      company: companyMatch?.[1]?.trim() || "a company",
-      position: positionMatch?.[1] || "intern position",
-    };
-  } catch (error) {
-    console.error("Error extracting details:", error);
-    return {
-      date: "tomorrow",
-      time: "10:00 AM",
-      company: "a company",
-      position: "intern position",
-    };
-  }
-});
-
-function extractInterviewId(query) {
-  try {
-    const idMatch =
-      query.match(/int_[a-z0-9]+/i) ||
-      query.match(/(?:interview|meeting) (?:ID|id) (\w+)/i);
-    return idMatch?.[0];
-  } catch (error) {
-    console.error("Error extracting ID:", error);
-    return null;
-  }
-}
-
-const classifyQuery = traceable(async (query) => {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "user",
-          content: `Classify this internship query into exactly one of:
-        - schedule_interview
-        - cancel_interview  
-        - upcoming_interviews
-        - requirements
-        - general_question
-        
-        Query: "${query}"
-        
-        Respond ONLY with the exact category name.`,
-        },
-      ],
-      temperature: 0,
-    });
-    return response.choices[0].message.content;
-  } catch (error) {
-    console.error("Classification error:", error);
-    return "general_question";
-  }
-});
-
-// Define nodes
-const routeQuery = traceable(async ({ userQuery }) => {
-  const category = await classifyQuery(userQuery);
-  return { category };
-});
-
-const scheduleInterview = traceable(async ({ userQuery }) => {
-  const details = extractInterviewDetails(userQuery);
-  const newInterview = {
-    id: `int_${Math.random().toString(36).slice(2, 9)}`,
-    ...details,
-    status: "scheduled",
-    createdAt: new Date().toISOString(),
-  };
-  mockInterviewsDB.interviews.push(newInterview);
-  return {
-    response: `✅ Scheduled your ${details.position} interview with ${details.company} on ${details.date} at ${details.time}.\nInterview ID: ${newInterview.id}`,
-  };
-});
-
-const cancelInterview = traceable(async ({ userQuery }) => {
-  const interviewId =
-    extractInterviewId(userQuery) ||
-    mockInterviewsDB.interviews.find((i) =>
-      i.company.toLowerCase().includes(userQuery.toLowerCase())
-    )?.id;
-
-  if (!interviewId) {
-    const upcoming = mockInterviewsDB.interviews
-      .filter((i) => i.status === "scheduled")
-      .map((i) => `- ${i.company} (ID: ${i.id})`)
-      .join("\n");
-    return {
-      response: `Please specify which interview to cancel. Your scheduled interviews:\n${
-        upcoming || "No upcoming interviews found."
-      }`,
-    };
-  }
-
-  const interview = mockInterviewsDB.interviews.find(
-    (i) => i.id === interviewId
-  );
-  if (interview) {
-    interview.status = "cancelled";
-    return {
-      response: `❌ Cancelled your ${interview.position} interview with ${interview.company} scheduled for ${interview.date}.`,
-    };
-  }
-  return {
-    response: "Interview not found. Please check the ID and try again.",
-  };
-});
-
-const showInterviews = traceable(async () => {
-  const upcoming = mockInterviewsDB.interviews
-    .filter((i) => i.status === "scheduled")
-    .map(
-      (i) =>
-        `🏢 ${i.company}\n   📅 ${i.date} at ${i.time}\n   📝 ${i.position}\n   🔑 ID: ${i.id}`
-    )
-    .join("\n\n");
-  return {
-    response: upcoming
-      ? `📅 Your Upcoming Interviews:\n\n${upcoming}`
-      : "You have no upcoming interviews scheduled.",
-  };
-});
-
-const getRequirements = traceable(async ({ userQuery }) => {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "user",
-          content: `The user asked about internship requirements: "${userQuery}"
-        Provide a concise, helpful response with:
-        - Common requirements (resume, transcripts, etc.)
-        - Application tips
-        - Skills to highlight
-        - Any specific advice for the query
-        
-        Keep it professional and under 5 bullet points.`,
-        },
-      ],
-      temperature: 0.3,
-    });
-    return {
-      response: response.choices[0].message.content,
-    };
-  } catch (error) {
-    console.error("Requirements error:", error);
-    return {
-      response:
-        "Common internship requirements include a resume, cover letter, and academic transcripts. Specific requirements vary by company.",
-    };
-  }
-});
-
-const answerGeneralQuestion = traceable(async ({ userQuery }) => {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "user",
-          content: `Answer this internship-related question in a helpful, professional manner:
-        "${userQuery}"
-        
-        Keep the response concise (2-3 sentences). If unsure, suggest where to find more information.`,
-        },
-      ],
-      temperature: 0.3,
-    });
-    return {
-      response: response.choices[0].message.content,
-    };
-  } catch (error) {
-    console.error("General question error:", error);
-    return {
-      response:
-        "I can help with general internship questions. Could you please rephrase or provide more details?",
-    };
-  }
-});
-
-// Create graph with proper configuration
-const workflow = new StateGraph({
-  channels: {
-    userQuery: { value: null },
-    response: { value: null },
-    category: { value: null },
+// Define state structure with proper merge functions
+const stateSchema = {
+  messages: {
+    value: (prev, newMsgs) => [...prev, ...newMsgs], // Proper merge function
+    default: () => [], // Default empty array
   },
+  result: {
+    value: null,
+  },
+};
+
+// Define tools for the agent
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "schedule_interview",
+      description: "Schedule a new interview",
+      parameters: {
+        type: "object",
+        properties: {
+          company: {
+            type: "string",
+            description: "The company name for the interview",
+          },
+          date: {
+            type: "string",
+            description: "The date of the interview in YYYY-MM-DD format",
+          },
+          time: {
+            type: "string",
+            description: "The time of the interview in HH:MM AM/PM format",
+          },
+          position: {
+            type: "string",
+            description: "The position being interviewed for",
+          },
+        },
+        required: ["company", "date", "time"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancel_interview",
+      description: "Cancel an existing interview",
+      parameters: {
+        type: "object",
+        properties: {
+          interview_id: {
+            type: "string",
+            description: "The ID of the interview to cancel",
+          },
+        },
+        required: ["interview_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_upcoming_interviews",
+      description: "Get a list of all upcoming interviews",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_requirements",
+      description: "Get requirements for internships",
+      parameters: {
+        type: "object",
+        properties: {
+          position: {
+            type: "string",
+            description: "The position to get requirements for",
+          },
+        },
+      },
+    },
+  },
+];
+
+// Tool implementations
+const toolImplementations = {
+  schedule_interview: traceable(
+    async (params) => {
+      const newInterview = {
+        id: `int_${Math.random().toString(36).slice(2, 8)}`,
+        company: params.company,
+        date: params.date,
+        time: params.time,
+        position: params.position || "Software Engineer Intern",
+        status: "scheduled",
+      };
+
+      mockDB.interviews.push(newInterview);
+
+      return {
+        result: `Successfully scheduled interview with ${params.company} on ${
+          params.date
+        } at ${params.time} for ${
+          params.position || "Software Engineer Intern"
+        }`,
+      };
+    },
+    { name: "schedule_interview", run_type: "tool" }
+  ),
+
+  cancel_interview: traceable(
+    async (params) => {
+      const interview = mockDB.interviews.find(
+        (i) => i.id === params.interview_id
+      );
+      if (interview) {
+        mockDB.interviews = mockDB.interviews.filter(
+          (i) => i.id !== params.interview_id
+        );
+        return {
+          result: `Cancelled interview with ${interview.company} scheduled for ${interview.date}`,
+        };
+      }
+      return {
+        result: "No interview found with that ID",
+      };
+    },
+    { name: "cancel_interview", run_type: "tool" }
+  ),
+
+  get_upcoming_interviews: traceable(
+    async () => {
+      const upcoming = mockDB.interviews
+        .filter((i) => i.status === "scheduled")
+        .map(
+          (i) =>
+            `${i.company} - ${i.date} at ${i.time} (${i.position}) [ID: ${i.id}]`
+        )
+        .join("\n");
+
+      return {
+        result: upcoming || "No upcoming interviews",
+      };
+    },
+    { name: "get_upcoming_interviews", run_type: "tool" }
+  ),
+
+  get_requirements: traceable(
+    async (params) => {
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: `Provide concise internship requirements for ${
+              params.position || "a software engineering internship"
+            } (3-5 bullet points)`,
+          },
+        ],
+        temperature: 0.3,
+      });
+
+      return {
+        result: response.choices[0].message.content,
+      };
+    },
+    { name: "get_requirements", run_type: "tool" }
+  ),
+};
+
+// Create workflow
+const workflow = new StateGraph({ channels: stateSchema });
+
+// Add nodes with proper state handling
+workflow.addNode("generate_response", async (state) => {
+  const response = await openai.chat.completions.create({
+    model: "gpt-3.5-turbo",
+    messages: state.messages,
+    tools,
+    tool_choice: "auto",
+  });
+
+  const responseMessage = response.choices[0].message;
+
+  return {
+    messages: [responseMessage], // Return new messages to be merged
+    result: responseMessage,
+  };
 });
 
-// Add all nodes first
-workflow.addNode("route_query", routeQuery);
-workflow.addNode("schedule_interview", scheduleInterview);
-workflow.addNode("cancel_interview", cancelInterview);
-workflow.addNode("upcoming_interviews", showInterviews);
-workflow.addNode("requirements", getRequirements);
-workflow.addNode("general_question", answerGeneralQuestion);
-workflow.addNode("end_node", (state) => state); // Proper end node that just passes through state
+workflow.addNode("execute_tools", async (state) => {
+  const lastMessage = state.messages[state.messages.length - 1];
 
-// Add edges after all nodes are defined
-workflow.addEdge("schedule_interview", "end_node");
-workflow.addEdge("cancel_interview", "end_node");
-workflow.addEdge("upcoming_interviews", "end_node");
-workflow.addEdge("requirements", "end_node");
-workflow.addEdge("general_question", "end_node");
+  const toolCalls = lastMessage.tool_calls || [];
+  const toolOutputs = [];
 
-// Conditional routing
-workflow.addConditionalEdges("route_query", (state) => state.category, {
-  schedule_interview: "schedule_interview",
-  cancel_interview: "cancel_interview",
-  upcoming_interviews: "upcoming_interviews",
-  requirements: "requirements",
-  general_question: "general_question",
-  default: "end_node", // Fallback
+  for (const toolCall of toolCalls) {
+    const toolName = toolCall.function.name;
+    const toolParams = JSON.parse(toolCall.function.arguments);
+
+    if (toolImplementations[toolName]) {
+      const output = await toolImplementations[toolName](toolParams);
+      toolOutputs.push({
+        tool_call_id: toolCall.id,
+        role: "tool",
+        name: toolName,
+        content: JSON.stringify(output.result),
+      });
+    }
+  }
+
+  return {
+    messages: toolOutputs, // Return tool outputs to be merged
+  };
 });
 
 // Set entry point
-workflow.setEntryPoint("route_query");
+workflow.setEntryPoint("generate_response");
 
-// Set finish point
-workflow.setFinishPoint("end_node");
+// Add conditional edges with proper configuration
+workflow.addConditionalEdges(
+  "generate_response",
+  (state) => (state.result?.tool_calls ? "execute_tools" : "__end__"),
+  {
+    execute_tools: "execute_tools",
+    __end__: "__end__",
+  }
+);
+
+// Add edge from tools back to generation
+workflow.addEdge("execute_tools", "generate_response");
 
 // Compile the workflow
 const app = await workflow.compile();
 
-// Create interactive interface
-const rl = readline.createInterface({ input, output });
-
-async function handleUserInput() {
-  console.log('🤖 Agent initialized. Type "exit" to quit.\n');
-
-  while (true) {
-    const userQuery = await rl.question("\n🧑‍💻 You: ");
-
-    if (userQuery.toLowerCase() === "exit") {
-      console.log("🤖 Agent: Goodbye! Have a great day!");
-      break;
-    }
-
-    try {
-      // Wrap the entire workflow execution with tracing
-      const result = await traceable(
-        async (input) => {
-          return await app.invoke(input);
-        },
-        {
-          name: "InternshipAgentWorkflow",
-          run_type: "chain",
-          inputs: { userQuery },
-          metadata: {
-            agent_version: "1.0",
-            workflow_type: "internship_assistant",
-          },
-        }
-      )({ userQuery });
-
-      console.log(`🤖 Agent: ${result.response}`);
-    } catch (error) {
-      console.error(
-        "🤖 Agent: Sorry, I encountered an error. Please try again."
-      );
-    }
-  }
-
-  rl.close();
-}
-
-console.log('🤖 Internship Expert Agent initialized. Type "exit" to quit.\n');
-handleUserInput().catch((err) => {
-  console.error("Error:", err);
-  process.exit(1);
+// CLI Interface with proper error handling
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
 });
+
+console.log('🤖 Internship Assistant: Type "exit" to quit\n');
+
+const chat = traceable(
+  async () => {
+    while (true) {
+      const query = await rl.question("You: ");
+      if (query.toLowerCase() === "exit") break;
+
+      try {
+        // Initialize conversation with proper state structure
+        const initialState = {
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. Be concise and helpful.",
+            },
+            {
+              role: "user",
+              content: query,
+            },
+          ],
+          result: null,
+        };
+
+        // Run the workflow
+        const result = await app.invoke(initialState);
+
+        // Get the final response
+        const finalResponse =
+          result.messages
+            .filter((msg) => msg.role === "assistant" && !msg.tool_calls)
+            .pop()?.content || "I couldn't process that request.";
+
+        console.log(`🤖: ${finalResponse}`);
+      } catch (error) {
+        console.error("Error:", error.message);
+        console.log("🤖: Sorry, I encountered an error");
+      }
+    }
+    rl.close();
+  },
+  { name: "chat_session", run_type: "chain" }
+);
+
+// Start the chat
+chat().catch(console.error);
