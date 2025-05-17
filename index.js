@@ -3,11 +3,18 @@ import { OpenAI } from "openai";
 import { StateGraph } from "@langchain/langgraph";
 import readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
+import { wrapOpenAI } from "langsmith/wrappers";
+import dotenv from "dotenv";
+import { traceable } from "langsmith/traceable";
+
+dotenv.config();
 
 // Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = wrapOpenAI(
+  new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  })
+);
 
 // mock database
 const mockInterviewsDB = {
@@ -32,7 +39,7 @@ const mockInterviewsDB = {
 };
 
 // Helper functions with better error handling
-function extractInterviewDetails(query) {
+const extractInterviewDetails = traceable((query) => {
   try {
     const dateMatch = query.match(
       /(\d{1,2}\/\d{1,2}\/\d{4})|(\w+ \d{1,2},? \d{4})/
@@ -59,7 +66,7 @@ function extractInterviewDetails(query) {
       position: "intern position",
     };
   }
-}
+});
 
 function extractInterviewId(query) {
   try {
@@ -73,7 +80,7 @@ function extractInterviewId(query) {
   }
 }
 
-async function classifyQuery(query) {
+const classifyQuery = traceable(async (query) => {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -99,15 +106,15 @@ async function classifyQuery(query) {
     console.error("Classification error:", error);
     return "general_question";
   }
-}
+});
 
 // Define nodes
-async function routeQuery({ userQuery }) {
+const routeQuery = traceable(async ({ userQuery }) => {
   const category = await classifyQuery(userQuery);
   return { category };
-}
+});
 
-async function scheduleInterview({ userQuery }) {
+const scheduleInterview = traceable(async ({ userQuery }) => {
   const details = extractInterviewDetails(userQuery);
   const newInterview = {
     id: `int_${Math.random().toString(36).slice(2, 9)}`,
@@ -119,9 +126,9 @@ async function scheduleInterview({ userQuery }) {
   return {
     response: `✅ Scheduled your ${details.position} interview with ${details.company} on ${details.date} at ${details.time}.\nInterview ID: ${newInterview.id}`,
   };
-}
+});
 
-async function cancelInterview({ userQuery }) {
+const cancelInterview = traceable(async ({ userQuery }) => {
   const interviewId =
     extractInterviewId(userQuery) ||
     mockInterviewsDB.interviews.find((i) =>
@@ -152,9 +159,9 @@ async function cancelInterview({ userQuery }) {
   return {
     response: "Interview not found. Please check the ID and try again.",
   };
-}
+});
 
-async function showInterviews() {
+const showInterviews = traceable(async () => {
   const upcoming = mockInterviewsDB.interviews
     .filter((i) => i.status === "scheduled")
     .map(
@@ -167,9 +174,9 @@ async function showInterviews() {
       ? `📅 Your Upcoming Interviews:\n\n${upcoming}`
       : "You have no upcoming interviews scheduled.",
   };
-}
+});
 
-async function getRequirements({ userQuery }) {
+const getRequirements = traceable(async ({ userQuery }) => {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -198,9 +205,9 @@ async function getRequirements({ userQuery }) {
         "Common internship requirements include a resume, cover letter, and academic transcripts. Specific requirements vary by company.",
     };
   }
-}
+});
 
-async function answerGeneralQuestion({ userQuery }) {
+const answerGeneralQuestion = traceable(async ({ userQuery }) => {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -225,7 +232,7 @@ async function answerGeneralQuestion({ userQuery }) {
         "I can help with general internship questions. Could you please rephrase or provide more details?",
     };
   }
-}
+});
 
 // Create graph with proper configuration
 const workflow = new StateGraph({
@@ -275,6 +282,8 @@ const app = await workflow.compile();
 const rl = readline.createInterface({ input, output });
 
 async function handleUserInput() {
+  console.log('🤖 Agent initialized. Type "exit" to quit.\n');
+
   while (true) {
     const userQuery = await rl.question("\n🧑‍💻 You: ");
 
@@ -284,7 +293,22 @@ async function handleUserInput() {
     }
 
     try {
-      const result = await app.invoke({ userQuery });
+      // Wrap the entire workflow execution with tracing
+      const result = await traceable(
+        async (input) => {
+          return await app.invoke(input);
+        },
+        {
+          name: "InternshipAgentWorkflow",
+          run_type: "chain",
+          inputs: { userQuery },
+          metadata: {
+            agent_version: "1.0",
+            workflow_type: "internship_assistant",
+          },
+        }
+      )({ userQuery });
+
       console.log(`🤖 Agent: ${result.response}`);
     } catch (error) {
       console.error(

@@ -2,6 +2,10 @@
   "type": "module",
   "dependencies": {
     "@langchain/langgraph": "^0.0.5",
-    "openai": "^4.0.0"
+    "dotenv": "^16.5.0",
+    "langchain": "^0.3.26",
+    "langsmith": "^0.3.29",
+    "openai": "^4.100.0",
+    "yarn": "^1.22.22"
   }
 }
