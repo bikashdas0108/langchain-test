@@ -80,16 +80,20 @@ const tools = [
     type: "function",
     function: {
       name: "cancel_interview",
-      description: "Cancel an existing interview",
+      description:
+        "Cancel an existing interview by company name or interview ID",
       parameters: {
         type: "object",
         properties: {
+          company: {
+            type: "string",
+            description: "The exact company name for the interview to cancel",
+          },
           interview_id: {
             type: "string",
             description: "The ID of the interview to cancel",
           },
         },
-        required: ["interview_id"],
       },
     },
   },
@@ -150,20 +154,70 @@ const toolImplementations = {
 
   cancel_interview: traceable(
     async (params) => {
-      const interview = mockDB.interviews.find(
-        (i) => i.id === params.interview_id
+      // First get current scheduled interviews
+      const scheduledInterviews = mockDB.interviews.filter(
+        (i) => i.status === "scheduled"
       );
-      if (interview) {
+
+      if (scheduledInterviews.length === 0) {
+        return {
+          result: "You currently have no scheduled interviews to cancel.",
+        };
+      }
+
+      // Verify we have valid parameters
+      if (!params.company && !params.interview_id) {
+        const companiesList = scheduledInterviews
+          .map((i) => `- ${i.company} (ID: ${i.id})`)
+          .join("\n");
+        return {
+          result: `Please specify either:\n1. The exact company name\n2. Or the interview ID\n\nYour scheduled interviews are:\n${companiesList}`,
+        };
+      }
+
+      // Handle company name cancellation
+      if (params.company) {
+        const companyName = params.company.trim().toLowerCase();
+        const matchingInterview = scheduledInterviews.find(
+          (i) => i.company.toLowerCase() === companyName
+        );
+
+        if (!matchingInterview) {
+          const companiesList = scheduledInterviews
+            .map((i) => `- ${i.company} (ID: ${i.id})`)
+            .join("\n");
+          return {
+            result: `No interview found with company "${params.company}".\n\nYour scheduled interviews are:\n${companiesList}`,
+          };
+        }
+
+        // Only remove if we found exact match
+        mockDB.interviews = mockDB.interviews.filter(
+          (i) => i.id !== matchingInterview.id
+        );
+        return {
+          result: `Successfully cancelled your interview with ${matchingInterview.company} scheduled for ${matchingInterview.date}.`,
+        };
+      }
+
+      // Handle interview ID cancellation
+      if (params.interview_id) {
+        const interview = scheduledInterviews.find(
+          (i) => i.id === params.interview_id
+        );
+        if (!interview) {
+          return {
+            result: `No scheduled interview found with ID "${params.interview_id}".`,
+          };
+        }
+
         mockDB.interviews = mockDB.interviews.filter(
           (i) => i.id !== params.interview_id
         );
         return {
-          result: `Cancelled interview with ${interview.company} scheduled for ${interview.date}`,
+          result: `Successfully cancelled your interview with ${interview.company} (ID: ${interview.id}) scheduled for ${interview.date}.`,
         };
       }
-      return {
-        result: "No interview found with that ID",
-      };
     },
     { name: "cancel_interview", run_type: "tool" }
   ),
@@ -211,48 +265,59 @@ const toolImplementations = {
 // Create workflow
 const workflow = new StateGraph({ channels: stateSchema });
 
-// Add nodes with proper state handling
-workflow.addNode("generate_response", async (state) => {
-  const response = await openai.chat.completions.create({
-    model: "gpt-3.5-turbo",
-    messages: state.messages,
-    tools,
-    tool_choice: "auto",
-  });
-
-  const responseMessage = response.choices[0].message;
-
-  return {
-    messages: [responseMessage], // Return new messages to be merged
-    result: responseMessage,
-  };
-});
-
-workflow.addNode("execute_tools", async (state) => {
-  const lastMessage = state.messages[state.messages.length - 1];
-
-  const toolCalls = lastMessage.tool_calls || [];
-  const toolOutputs = [];
-
-  for (const toolCall of toolCalls) {
-    const toolName = toolCall.function.name;
-    const toolParams = JSON.parse(toolCall.function.arguments);
-
-    if (toolImplementations[toolName]) {
-      const output = await toolImplementations[toolName](toolParams);
-      toolOutputs.push({
-        tool_call_id: toolCall.id,
-        role: "tool",
-        name: toolName,
-        content: JSON.stringify(output.result),
+// Add nodes with tracing
+workflow.addNode(
+  "generate_response",
+  traceable(
+    async (state) => {
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: state.messages,
+        tools,
+        tool_choice: "auto",
       });
-    }
-  }
 
-  return {
-    messages: toolOutputs, // Return tool outputs to be merged
-  };
-});
+      const responseMessage = response.choices[0].message;
+
+      return {
+        messages: [responseMessage], // Return new messages to be merged
+        result: responseMessage,
+      };
+    },
+    { name: "generate_response_llm", run_type: "llm" }
+  )
+);
+
+workflow.addNode(
+  "execute_tools",
+  traceable(
+    async (state) => {
+      const lastMessage = state.messages[state.messages.length - 1];
+      const toolCalls = lastMessage.tool_calls || [];
+      const toolOutputs = [];
+
+      for (const toolCall of toolCalls) {
+        const toolName = toolCall.function.name;
+        const toolParams = JSON.parse(toolCall.function.arguments);
+
+        if (toolImplementations[toolName]) {
+          const output = await toolImplementations[toolName](toolParams);
+          toolOutputs.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: toolName,
+            content: JSON.stringify(output.result),
+          });
+        }
+      }
+
+      return {
+        messages: toolOutputs, // Return tool outputs to be merged
+      };
+    },
+    { name: "execute_tools_node", run_type: "tool" }
+  )
+);
 
 // Set entry point
 workflow.setEntryPoint("generate_response");
