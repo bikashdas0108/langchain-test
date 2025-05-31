@@ -1,0 +1,9 @@
+OPENAI_API_KEY=sk-svcacct-VACINWQK6jvMkOTAlvF7r70EjN_1ItSluf2kfm8kLHE16Ej7E92E3gZF6-_GHbVneyj7_fru6TP4cubqlcA
+
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT="https://api.smith.langchain.com"
+LANGSMITH_API_KEY="lsv2_pt_ae6c07f61_6219f7274a"
+LANGSMITH_PROJECT="pr-dshdhdehl-26"
+API_BASE_URL=http://localhost:4000
+
+PORT=3001
