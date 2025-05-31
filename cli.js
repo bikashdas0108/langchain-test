@@ -17,6 +17,7 @@ const openai = new OpenAI({
 // MCP client setup
 let mcpClient;
 let mcpTransport;
+let availableTools = [];
 
 // Setup readline interface
 const rl = readline.createInterface({

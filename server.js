@@ -228,6 +228,32 @@ API Response: ${JSON.stringify(result, null, 2)}`,
   }
 }
 
+// async function listInterviews() {
+//   try {
+//     const result = await makeApiCall(
+//       "/api/v1/internal-service/host-company/interview/list?interview_type=all&perPage=10&sort_column=introduction_id&sort_order=DESC",
+//       "GET",
+//       {}
+//     );
+
+//     return {
+//       content: [
+//         {
+//           type: "text",
+//           text: `List of interview fetched!
+
+// API Response: ${JSON.stringify(result, null, 2)}`,
+//         },
+//       ],
+//     };
+//   } catch (error) {
+//     throw new McpError(
+//       ErrorCode.InternalError,
+//       `Failed to get interview: ${error} ${error.message}`
+//     );
+//   }
+// }
+
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
