@@ -458,10 +458,53 @@ workflow.addNode(
   "final_response",
   traceable(
     async (state) => {
+      // Check if we have any tool outputs
+      const toolOutputs = state.messages.filter((msg) => msg.role === "tool");
+      const lastToolOutput = toolOutputs[toolOutputs.length - 1];
+
+      if (lastToolOutput) {
+        try {
+          const toolResult = JSON.parse(lastToolOutput.content);
+          // Get the last tool call to extract parameters
+          const lastToolCall = state.messages.find((msg) => msg.tool_calls)
+            ?.tool_calls[0];
+
+          // Add the tool result to the messages for context
+          const messagesWithResult = [
+            ...state.messages,
+            {
+              role: "system",
+              content: `The tool execution was successful. Here are the details:
+                Tool: ${lastToolCall?.function.name}
+                Parameters: ${JSON.stringify(lastToolCall?.function.arguments)}
+                Result: ${toolResult.result}
+                Please provide a natural, conversational response about this successful operation.`,
+            },
+          ];
+
+          // Generate a natural response using the AI
+          const response = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: messagesWithResult,
+            temperature: 0.7,
+          });
+
+          const responseMessage = response.choices[0].message;
+
+          return {
+            messages: [responseMessage],
+            result: responseMessage,
+          };
+        } catch (e) {
+          // If parsing fails, continue with normal response generation
+        }
+      }
+
+      // If no tool output or parsing failed, generate a response
       const response = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: state.messages,
-        // Important: NO tools parameter here to prevent further tool calls
+        temperature: 0.7,
       });
 
       const responseMessage = response.choices[0].message;
@@ -513,92 +556,92 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize MCP connection and get tools
-  const mcpTools = await initializeMCP();
-  const mcpToolsForOpenAI = convertMCPToolsToOpenAI(mcpTools);
+  try {
+    // Initialize MCP connection and get tools
+    const mcpTools = await initializeMCP();
+    const mcpToolsForOpenAI = convertMCPToolsToOpenAI(mcpTools);
 
-  // Combine all tools
-  allTools = [...localTools, ...mcpToolsForOpenAI];
-  allToolImplementations = {
-    ...localToolImplementations,
-    ...mcpToolImplementations,
-  };
+    // Combine all tools
+    allTools = [...localTools, ...mcpToolsForOpenAI];
+    allToolImplementations = {
+      ...localToolImplementations,
+      ...mcpToolImplementations,
+    };
 
-  // Compile the workflow
-  const app = await workflow.compile();
+    // Compile the workflow
+    const app = await workflow.compile();
 
-  // CLI Interface with proper error handling
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+    // CLI Interface with proper error handling
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
 
-  console.log('🤖 Internship Assistant with MCP: Type "exit" to quit\n');
+    console.log('🤖 Internship Assistant with MCP: Type "exit" to quit\n');
 
-  const chat = traceable(
-    async () => {
-      while (true) {
-        const query = await rl.question("You: ");
-        if (query.toLowerCase() === "exit") break;
+    const chat = traceable(
+      async () => {
+        while (true) {
+          const query = await rl.question("\nYou: ");
+          if (query.toLowerCase() === "exit") {
+            console.log(
+              "\n👋 Goodbye! Thank you for using the Internship Assistant."
+            );
+            await cleanup();
+            process.exit(0);
+          }
 
-        try {
-          console.log("🔍 Processing query:", query);
+          try {
+            console.log("🔍 Processing query:", query);
 
-          // Initialize conversation with proper state structure
-          const initialState = {
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. You also have access to MCP tools for recommending candidates and scheduling interviews with external systems. Be concise and helpful. When scheduling interviews, use the schedule_interview_local tool for local storage.",
-              },
-              {
-                role: "user",
-                content: query,
-              },
-            ],
-            result: null,
-          };
+            const initialState = {
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. You also have access to MCP tools for recommending candidates and scheduling interviews with external systems. Be concise and helpful. When scheduling interviews, use the schedule_interview_local tool for local storage.",
+                },
+                {
+                  role: "user",
+                  content: query,
+                },
+              ],
+              result: null,
+            };
 
-          console.log("🚀 Invoking workflow...");
-          // Run the workflow
-          const result = await app.invoke(initialState);
-          console.log("✅ Workflow completed");
+            console.log("🚀 Invoking workflow...");
+            const result = await app.invoke(initialState);
+            console.log("✅ Workflow completed");
 
-          // Get the final response
-          const assistantMessages = result.messages.filter(
-            (msg) => msg.role === "assistant" && !msg.tool_calls
-          );
-          const finalResponse =
-            assistantMessages.length > 0
-              ? assistantMessages[assistantMessages.length - 1].content
-              : "I couldn't process that request.";
+            // Get the final response
+            const assistantMessages = result.messages.filter(
+              (msg) => msg.role === "assistant" && !msg.tool_calls
+            );
 
-          console.log(`🤖: ${finalResponse}`);
-        } catch (error) {
-          console.error("❌ Chat error details:", error);
-          console.error("❌ Stack trace:", error.stack);
-          console.log("🤖: Sorry, I encountered an error. Please try again.");
+            // Use the last assistant message as the final response
+            const finalResponse =
+              assistantMessages.length > 0
+                ? assistantMessages[assistantMessages.length - 1].content
+                : "I couldn't process that request.";
+
+            console.log(`🤖: ${finalResponse}`);
+          } catch (error) {
+            console.error("❌ Chat error details:", error);
+            console.error("❌ Stack trace:", error.stack);
+            console.log("🤖: Sorry, I encountered an error. Please try again.");
+          }
         }
-      }
-      rl.close();
-    },
-    { name: "chat_session", run_type: "chain" }
-  );
+      },
+      { name: "chat_session", run_type: "chain" }
+    );
 
-  // Handle cleanup on exit
-  process.on("SIGINT", async () => {
+    // Start the chat
+    await chat();
+  } catch (error) {
+    console.error("❌ Application failed to start:", error);
     await cleanup();
-    process.exit(0);
-  });
-
-  process.on("SIGTERM", async () => {
-    await cleanup();
-    process.exit(0);
-  });
-
-  // Start the chat
-  await chat().catch(console.error);
+    process.exit(1);
+  }
 }
 
 // Start the application
