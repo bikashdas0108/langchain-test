@@ -1,5 +1,5 @@
 import { OpenAI } from "openai";
-import { StateGraph, NodeInterrupt, MemorySaver } from "@langchain/langgraph";
+import { StateGraph } from "@langchain/langgraph";
 import readline from "readline/promises";
 import process from "process";
 import { traceable } from "langsmith/traceable";
@@ -52,20 +52,14 @@ async function initializeMCP() {
   }
 }
 
-// Update state schema to include interview state
+// Define state structure with proper merge functions
 const stateSchema = {
   messages: {
-    value: (prev, newMsgs) => [...prev, ...newMsgs],
-    default: () => [],
+    value: (prev, newMsgs) => [...prev, ...newMsgs], // Proper merge function
+    default: () => [], // Default empty array
   },
   result: {
     value: null,
-  },
-  interviewId: {
-    value: null,
-  },
-  cancellationRequested: {
-    value: false,
   },
 };
 
@@ -123,78 +117,38 @@ const mcpToolImplementations = {
   ),
 
   cancel_interview: traceable(
-    async (params, state) => {
-      // Initialize state if not present
-      if (!state) {
-        state = {
-          cancellationRequested: false,
-          interviewId: null,
-        };
-      }
+    async (params) => {
+      try {
+        const result = await mcpClient.callTool({
+          name: "cancel_interview",
+          arguments: params,
+        });
 
-      // If this is a new cancellation request
-      if (!state.cancellationRequested) {
-        state.cancellationRequested = true;
+        // Check if the result contains an error
+        if (result.error) {
+          return {
+            result: result.content[0].text,
+            success: false,
+            error: true,
+          };
+        }
+
         return {
-          result: "Please provide the interview ID you would like to cancel.",
+          result: result.content[0]?.text || "Interview cancelled successfully",
+          success: true,
+        };
+      } catch (error) {
+        // Log the error for debugging
+        console.error("Error in cancel_interview:", error);
+
+        // Return the raw error message for AI interpretation
+        return {
+          result: `Error cancelling interview: ${error.message}`,
           success: false,
           error: true,
-          rawError: "Waiting for interview ID",
+          rawError: error.message,
         };
       }
-
-      // If we're waiting for an ID and got a number
-      if (state.cancellationRequested && !state.interviewId) {
-        if (typeof params === "string" || typeof params === "number") {
-          state.interviewId = parseInt(params);
-          try {
-            const result = await mcpClient.callTool({
-              name: "cancel_interview",
-              arguments: {
-                interviewId: state.interviewId,
-                cancelledBy: "Intern",
-              },
-            });
-
-            // Reset state after successful cancellation
-            state.cancellationRequested = false;
-            state.interviewId = null;
-
-            if (result.error) {
-              return {
-                result: result.content[0].text,
-                success: false,
-                error: true,
-              };
-            }
-
-            return {
-              result:
-                result.content[0]?.text || "Interview cancelled successfully",
-              success: true,
-            };
-          } catch (error) {
-            // Reset state on error
-            state.cancellationRequested = false;
-            state.interviewId = null;
-
-            console.error("Error in cancel_interview:", error);
-            return {
-              result: `Error cancelling interview: ${error.message}`,
-              success: false,
-              error: true,
-              rawError: error.message,
-            };
-          }
-        }
-      }
-
-      return {
-        result: "Please provide a valid interview ID.",
-        success: false,
-        error: true,
-        rawError: "Invalid interview ID",
-      };
     },
     { name: "cancel_interview", run_type: "tool" }
   ),
@@ -441,12 +395,7 @@ async function main() {
     };
 
     // Compile the workflow
-    const app = await workflow.compile({
-      checkpointer: new MemorySaver(),
-      configurable: {
-        thread_id: "main_thread",
-      },
-    });
+    const app = await workflow.compile();
 
     // CLI Interface with proper error handling
     const rl = readline.createInterface({
@@ -487,11 +436,7 @@ async function main() {
             };
 
             console.log("🚀 Invoking workflow...");
-            const result = await app.invoke(initialState, {
-              configurable: {
-                thread_id: "main_thread",
-              },
-            });
+            const result = await app.invoke(initialState);
             console.log("✅ Workflow completed");
 
             // Get the final response
