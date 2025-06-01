@@ -71,6 +71,7 @@ async function analyzePrompt(userPrompt) {
 Available tools:
 - recommend_candidate: Use when user wants to recommend a candidate to a company
 - schedule_interview: Use when user wants to schedule an interview
+- cancel_interview: Use when user wants to cancel a scheduled interview
 
 Analyze the user's request and return a JSON response with:
 {
@@ -96,6 +97,10 @@ For schedule_interview, extract:
 - interviewerId (number)
 - startTime (string in ISO format)
 - endTime (string in ISO format)
+
+For cancel_interview, extract:
+- interviewId (number)
+- cancelledBy (string, e.g. "Intern" or "HC")
 
 If you're not confident about the tool or parameters, set confidence < 0.5.
 Always return valid JSON.`;

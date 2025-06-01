@@ -53,26 +53,26 @@ async function initializeMCP() {
 }
 
 // Enhanced mock database
-const mockDB = {
-  interviews: [
-    {
-      id: "int_1",
-      company: "TechCorp",
-      date: "2023-12-15",
-      time: "10:00 AM",
-      position: "Software Developer",
-      status: "scheduled",
-    },
-    {
-      id: "int_2",
-      company: "DataSystems",
-      date: "2023-12-18",
-      time: "2:30 PM",
-      position: "Data Analyst",
-      status: "scheduled",
-    },
-  ],
-};
+// const mockDB = {
+//   interviews: [
+//     {
+//       interviewId: 10,
+//       company: "TechCorp",
+//       date: "2023-12-15",
+//       time: "10:00 AM",
+//       position: "Software Developer",
+//       status: "scheduled",
+//     },
+//     {
+//       interviewId: 11,
+//       company: "DataSystems",
+//       date: "2023-12-18",
+//       time: "2:30 PM",
+//       position: "Data Analyst",
+//       status: "scheduled",
+//     },
+//   ],
+// };
 
 // Define state structure with proper merge functions
 const stateSchema = {
@@ -137,6 +137,67 @@ const mcpToolImplementations = {
     },
     { name: "schedule_interview", run_type: "tool" }
   ),
+
+  cancel_interview: traceable(
+    async (params) => {
+      try {
+        const result = await mcpClient.callTool({
+          name: "cancel_interview",
+          arguments: params,
+        });
+
+        // Check if the result contains an error
+        if (result.error) {
+          return {
+            result: result.content[0].text,
+            success: false,
+            error: true,
+          };
+        }
+
+        return {
+          result: result.content[0]?.text || "Interview cancelled successfully",
+          success: true,
+        };
+      } catch (error) {
+        // Log the error for debugging
+        console.error("Error in cancel_interview:", error);
+
+        // Extract the actual error message from the MCP error chain
+        let errorMessage = error.message;
+
+        // Try to extract the most specific error message
+        if (errorMessage.includes("API call failed")) {
+          const errorParts = errorMessage.split("API call failed:");
+          if (errorParts.length > 1) {
+            // Get the last part of the error chain which usually contains the most specific error
+            const lastErrorPart = errorParts[errorParts.length - 1].trim();
+
+            // Map common HTTP status codes to user-friendly messages
+            if (lastErrorPart.includes("400 Bad Request")) {
+              errorMessage =
+                "Invalid interview ID. Please provide a valid interview ID.";
+            } else if (lastErrorPart.includes("404 Not Found")) {
+              errorMessage = `Interview with ID ${params.interviewId} was not found. Please verify the interview ID.`;
+            } else if (lastErrorPart.includes("500")) {
+              errorMessage =
+                "The interview service encountered an error. Please try again later.";
+            } else {
+              errorMessage = `Failed to cancel interview: ${lastErrorPart}`;
+            }
+          }
+        }
+
+        // Return error response
+        return {
+          result: errorMessage,
+          success: false,
+          error: true,
+        };
+      }
+    },
+    { name: "cancel_interview", run_type: "tool" }
+  ),
 };
 
 // Keep existing local tool implementations
@@ -165,87 +226,22 @@ const localToolImplementations = {
   //   { name: "schedule_interview_local", run_type: "tool" }
   // ),
 
-  cancel_interview: traceable(
-    async (params) => {
-      const scheduledInterviews = mockDB.interviews.filter(
-        (i) => i.status === "scheduled"
-      );
+  // get_upcoming_interviews: traceable(
+  //   async () => {
+  //     const upcoming = mockDB.interviews
+  //       .filter((i) => i.status === "scheduled")
+  //       .map(
+  //         (i) =>
+  //           `${i.company} - ${i.date} at ${i.time} (${i.position}) [ID: ${i.id}]`
+  //       )
+  //       .join("\n");
 
-      if (scheduledInterviews.length === 0) {
-        return {
-          result: "You currently have no scheduled interviews to cancel.",
-        };
-      }
-
-      if (!params.company && !params.interview_id) {
-        const companiesList = scheduledInterviews
-          .map((i) => `- ${i.company} (ID: ${i.id})`)
-          .join("\n");
-        return {
-          result: `Please specify either:\n1. The exact company name\n2. Or the interview ID\n\nYour scheduled interviews are:\n${companiesList}`,
-        };
-      }
-
-      if (params.company) {
-        const companyName = params.company.trim().toLowerCase();
-        const matchingInterview = scheduledInterviews.find(
-          (i) => i.company.toLowerCase() === companyName
-        );
-
-        if (!matchingInterview) {
-          const companiesList = scheduledInterviews
-            .map((i) => `- ${i.company} (ID: ${i.id})`)
-            .join("\n");
-          return {
-            result: `No interview found with company "${params.company}".\n\nYour scheduled interviews are:\n${companiesList}`,
-          };
-        }
-
-        mockDB.interviews = mockDB.interviews.filter(
-          (i) => i.id !== matchingInterview.id
-        );
-        return {
-          result: `Successfully cancelled your interview with ${matchingInterview.company} scheduled for ${matchingInterview.date}.`,
-        };
-      }
-
-      if (params.interview_id) {
-        const interview = scheduledInterviews.find(
-          (i) => i.id === params.interview_id
-        );
-        if (!interview) {
-          return {
-            result: `No scheduled interview found with ID "${params.interview_id}".`,
-          };
-        }
-
-        mockDB.interviews = mockDB.interviews.filter(
-          (i) => i.id !== params.interview_id
-        );
-        return {
-          result: `Successfully cancelled your interview with ${interview.company} (ID: ${interview.id}) scheduled for ${interview.date}.`,
-        };
-      }
-    },
-    { name: "cancel_interview", run_type: "tool" }
-  ),
-
-  get_upcoming_interviews: traceable(
-    async () => {
-      const upcoming = mockDB.interviews
-        .filter((i) => i.status === "scheduled")
-        .map(
-          (i) =>
-            `${i.company} - ${i.date} at ${i.time} (${i.position}) [ID: ${i.id}]`
-        )
-        .join("\n");
-
-      return {
-        result: upcoming || "No upcoming interviews",
-      };
-    },
-    { name: "get_upcoming_interviews", run_type: "tool" }
-  ),
+  //     return {
+  //       result: upcoming || "No upcoming interviews",
+  //     };
+  //   },
+  //   { name: "get_upcoming_interviews", run_type: "tool" }
+  // ),
 
   get_requirements: traceable(
     async (params) => {
@@ -301,27 +297,6 @@ const localTools = [
   //     },
   //   },
   // },
-  {
-    type: "function",
-    function: {
-      name: "cancel_interview",
-      description:
-        "Cancel an existing interview by company name or interview ID",
-      parameters: {
-        type: "object",
-        properties: {
-          company: {
-            type: "string",
-            description: "The exact company name for the interview to cancel",
-          },
-          interview_id: {
-            type: "string",
-            description: "The ID of the interview to cancel",
-          },
-        },
-      },
-    },
-  },
   {
     type: "function",
     function: {
@@ -465,38 +440,41 @@ workflow.addNode(
       if (lastToolOutput) {
         try {
           const toolResult = JSON.parse(lastToolOutput.content);
+
           // Get the last tool call to extract parameters
           const lastToolCall = state.messages.find((msg) => msg.tool_calls)
             ?.tool_calls[0];
+          const toolName = lastToolCall?.function.name;
+          const toolParams = JSON.parse(
+            lastToolCall?.function.arguments || "{}"
+          );
 
-          // Add the tool result to the messages for context
-          const messagesWithResult = [
-            ...state.messages,
-            {
-              role: "system",
-              content: `The tool execution was successful. Here are the details:
-                Tool: ${lastToolCall?.function.name}
-                Parameters: ${JSON.stringify(lastToolCall?.function.arguments)}
-                Result: ${toolResult.result}
-                Please provide a natural, conversational response about this successful operation.`,
-            },
-          ];
+          // Create a context message for the AI
+          const contextMessage = {
+            role: "system",
+            content: `The tool execution completed with the following details:
+              Tool: ${toolName}
+              Parameters: ${JSON.stringify(toolParams)}
+              Result: ${toolResult.result}
+              
+              Please provide a natural, conversational response about this operation. 
+              If there was an error, acknowledge it and explain what happened.
+              If it was successful, confirm the action and provide any relevant details.`,
+          };
 
           // Generate a natural response using the AI
           const response = await openai.chat.completions.create({
             model: "gpt-3.5-turbo",
-            messages: messagesWithResult,
+            messages: [contextMessage],
             temperature: 0.7,
           });
 
-          const responseMessage = response.choices[0].message;
-
           return {
-            messages: [responseMessage],
-            result: responseMessage,
+            messages: [response.choices[0].message],
+            result: response.choices[0].message,
           };
         } catch (e) {
-          // If parsing fails, continue with normal response generation
+          console.error("Error parsing tool output:", e);
         }
       }
 
@@ -507,11 +485,9 @@ workflow.addNode(
         temperature: 0.7,
       });
 
-      const responseMessage = response.choices[0].message;
-
       return {
-        messages: [responseMessage],
-        result: responseMessage,
+        messages: [response.choices[0].message],
+        result: response.choices[0].message,
       };
     },
     { name: "final_response_llm", run_type: "llm" }
@@ -599,7 +575,7 @@ async function main() {
                 {
                   role: "system",
                   content:
-                    "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. You also have access to MCP tools for recommending candidates and scheduling interviews with external systems. Be concise and helpful. When scheduling interviews, use the schedule_interview_local tool for local storage.",
+                    "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. You have access to MCP tools for recommending candidates, scheduling interviews, and canceling interviews with external systems. When canceling interviews, use the cancel_interview tool with the interview ID and who is canceling (Intern or HC). Be concise and helpful.",
                 },
                 {
                   role: "user",
