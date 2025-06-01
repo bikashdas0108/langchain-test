@@ -124,6 +124,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           ],
         },
       },
+      {
+        name: "cancel_interview",
+        description: "Cancel a scheduled interview",
+        inputSchema: {
+          type: "object",
+          properties: {
+            interviewId: {
+              type: "number",
+              description: "ID of the interview to cancel",
+            },
+            cancelledBy: {
+              type: "string",
+              description:
+                "Who is cancelling the interview (e.g., 'Intern', 'HC')",
+            },
+          },
+          required: ["interviewId", "cancelledBy"],
+        },
+      },
     ],
   };
 });
@@ -228,6 +247,37 @@ API Response: ${JSON.stringify(result, null, 2)}`,
   }
 }
 
+// Handle cancel interview tool
+async function handleCancelInterview(args) {
+  try {
+    const cancelData = {
+      cancelled_by: args.cancelledBy || "Intern",
+    };
+
+    const result = await makeApiCall(
+      `/api/v1/internal-service/host-company/interview/${args.interviewId}/cancel`,
+      "PATCH",
+      cancelData
+    );
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Successfully cancelled interview!
+
+API Response: ${JSON.stringify(result, null, 2)}`,
+        },
+      ],
+    };
+  } catch (error) {
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to cancel interview: ${error} ${error.message}`
+    );
+  }
+}
+
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -237,6 +287,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return await handleRecommendCandidate(args);
     case "schedule_interview":
       return await handleScheduleInterview(args);
+    case "cancel_interview":
+      return await handleCancelInterview(args);
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
   }
