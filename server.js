@@ -460,14 +460,13 @@ export class MCPServer {
 
       const candidates = await makeApiCall(updatedUrl, "GET");
 
-      const pagination = candidates.pagination || {};
-
       const updatedCandidates = {
         count: candidates.data?.payload?.count,
         list: candidates.data?.payload?.list?.map((item) => ({
           full_name: item.full_name,
           phone_number: item.phone_number,
           intern_id: item.intern_id,
+          profile_link: `${FE_BASE_URL}/intern-profile/${item.uuid}`,
           application: {
             application_id: item.application?.application_id,
             application_status: item.application?.application_status,
@@ -683,6 +682,7 @@ ${JSON.stringify(updatedProjectList, null, 2)}`,
 // Create Express app
 const app = express();
 const PORT = process.env.PORT || 3001;
+const FE_BASE_URL = process.env.FE_BASE_URL || "http://localhost:3000";
 
 app.use(cors());
 app.use(bodyParser.json());
