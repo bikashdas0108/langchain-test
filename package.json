@@ -23,6 +23,8 @@
     "build": "tsc",
     "start": "node build/index.js",
     "dev": "tsc && node build/index.js",
-    "cli": "tsc && node build/cli.js"
+    "cli": "tsc && node build/cli.js",
+    "server:http": "TRANSPORT_TYPE=http node server.js"
+
   }
 }

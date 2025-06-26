@@ -4,8 +4,8 @@ import readline from "readline/promises";
 import process from "process";
 import { traceable } from "langsmith/traceable";
 import dotenv from "dotenv";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import fetch from "node-fetch";
+import { randomUUID } from "crypto";
 
 dotenv.config();
 
@@ -14,38 +14,205 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// MCP client setup
+// MCP HTTP client setup
+const MCP_SERVER_URL =
+  process.env.MCP_SERVER_URL || "http://localhost:3001/mcp";
+const SESSION_ID_HEADER_NAME = "mcp-session-id";
+let sessionId = null;
+
+// HTTP-based MCP client
+class MCPHTTPClient {
+  constructor(serverUrl) {
+    this.serverUrl = serverUrl;
+    this.sessionId = null;
+  }
+
+async makeRequest(method, params = {}) {
+  const requestBody = {
+    jsonrpc: "2.0",
+    id: randomUUID(),
+    method: method,
+    params: params,
+  };
+
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+  };
+
+  // Add session ID header if we have one
+  if (this.sessionId) {
+    headers[SESSION_ID_HEADER_NAME] = this.sessionId;
+  }
+
+  try {
+    console.log('🌐 Making request to:', this.serverUrl);
+    console.log('📝 Request method:', method);
+    console.log('📋 Request headers:', headers);
+    console.log('📄 Request body:', JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch(this.serverUrl, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(requestBody),
+    });
+
+    console.log('📨 Response status:', response.status);
+    console.log('📨 Response headers:', Object.fromEntries(response.headers.entries()));
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Response error body:', errorText);
+      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+    }
+
+    // Extract session ID from response headers if available
+    const responseSessionId = response.headers.get(SESSION_ID_HEADER_NAME);
+    if (responseSessionId && !this.sessionId) {
+      this.sessionId = responseSessionId;
+      console.log(`📋 Session ID established: ${this.sessionId}`);
+    }
+
+    const responseText = await response.text();
+    console.log('📄 Raw response:', responseText);
+
+    // Check if response is SSE format
+    if (responseText.startsWith('event:') || responseText.includes('data:')) {
+      console.log('📡 Detected SSE response, parsing...');
+      return this.parseSSEResponse(responseText);
+    }
+
+    // Try to parse as JSON
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('❌ Failed to parse JSON response:', parseError);
+      throw new Error(`Invalid JSON response: ${responseText}`);
+    }
+
+    if (responseData.error) {
+      throw new Error(`MCP Error: ${JSON.stringify(responseData.error)}`);
+    }
+
+    return responseData.result;
+  } catch (error) {
+    console.error("❌ MCP request failed:", error);
+    throw error;
+  }
+}
+
+parseSSEResponse(sseText) {
+  const lines = sseText.split('\n');
+  let data = '';
+  
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      data += line.substring(6);
+    }
+  }
+  
+  if (data) {
+    try {
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('❌ Failed to parse SSE data as JSON:', error);
+      return { raw: data };
+    }
+  }
+  
+  return { raw: sseText };
+}
+
+  async initialize() {
+    try {
+      const result = await this.makeRequest("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {
+          roots: {
+            listChanged: false,
+          },
+          sampling: {},
+          tools: {},
+        },
+        clientInfo: {
+          name: "langraph-mcp-http-client",
+          version: "0.1.0",
+        },
+      });
+
+      console.log("✅ Connected to MCP server via HTTP");
+      console.log("📋 Server capabilities:", JSON.stringify(result, null, 2));
+      return result;
+    } catch (error) {
+      console.error("❌ Failed to initialize MCP connection:", error);
+      throw error;
+    }
+  }
+
+  async listTools() {
+    try {
+      const result = await this.makeRequest("tools/list");
+      return result;
+    } catch (error) {
+      console.error("❌ Failed to list tools:", error);
+      throw error;
+    }
+  }
+
+  async callTool(name, arguments_) {
+    try {
+      const result = await this.makeRequest("tools/call", {
+        name: name,
+        arguments: arguments_,
+      });
+      return result;
+    } catch (error) {
+      console.error(`❌ Failed to call tool ${name}:`, error);
+      throw error;
+    }
+  }
+}
+
+// MCP client instance
 let mcpClient;
-let mcpTransport;
 
 // Initialize MCP connection
 async function initializeMCP() {
   try {
-    mcpTransport = new StdioClientTransport({
-      command: "node",
-      args: ["server.js"],
-    });
+    console.log("🔗 Attempting to connect to MCP server at:", MCP_SERVER_URL);
 
-    mcpClient = new Client(
-      {
-        name: "langraph-mcp-client",
-        version: "0.1.0",
-      },
-      {
-        capabilities: {},
+    mcpClient = new MCPHTTPClient(MCP_SERVER_URL);
+    console.log("🚀 ~ initializeMCP ~ mcpClient:", mcpClient.initialize);
+
+    // Test server connectivity first
+    try {
+      const healthCheck = await fetch(
+        MCP_SERVER_URL.replace("/mcp", "/health")
+      );
+      if (!healthCheck.ok) {
+        throw new Error(`Health check failed: ${healthCheck.status}`);
       }
-    );
+      console.log("✅ MCP server health check passed");
+    } catch (healthError) {
+      console.error("❌ MCP server health check failed:", healthError.message);
+      console.error(
+        "💡 Make sure your MCP server is running on the correct port"
+      );
+      return [];
+    }
 
-    await mcpClient.connect(mcpTransport);
-    console.log("✅ Connected to MCP server");
+    // Initialize the connection
+    await mcpClient.initialize();
 
+    // List available tools
     const tools = await mcpClient.listTools();
     console.log("📋 Available MCP tools:");
-    tools.tools.forEach((tool) => {
+    tools?.result?.tools.forEach((tool) => {
       console.log(`  - ${tool.name}: ${tool.description}`);
     });
 
-    return tools.tools;
+    return tools?.result?.tools || [];
   } catch (error) {
     console.error("❌ Failed to initialize MCP connection:", error);
     return [];
@@ -86,10 +253,7 @@ const mcpToolImplementations = {
   get_candidate_list: traceable(
     async (params) => {
       try {
-        const result = await mcpClient.callTool({
-          name: "get_candidate_list",
-          arguments: params,
-        });
+        const result = await mcpClient.callTool("get_candidate_list", params);
         return (
           result.content[0]?.text || "Candidate list retrieved successfully"
         );
@@ -103,10 +267,10 @@ const mcpToolImplementations = {
   get_career_field_list: traceable(
     async (params) => {
       try {
-        const result = await mcpClient.callTool({
-          name: "get_career_field_list",
-          arguments: params,
-        });
+        const result = await mcpClient.callTool(
+          "get_career_field_list",
+          params
+        );
         return (
           result.content[0]?.text || "Career field list retrieved successfully"
         );
@@ -117,13 +281,10 @@ const mcpToolImplementations = {
     { name: "get_career_field_list", run_type: "tool" }
   ),
 
-  get_io_list: traceable(
+  get_internship_opportunity_list: traceable(
     async (params) => {
       try {
-        const result = await mcpClient.callTool({
-          name: "get_io_list",
-          arguments: params,
-        });
+        const result = await mcpClient.callTool("get_internship_opportunity_list", params);
         return (
           result.content[0]?.text ||
           "Internship opportunity list retrieved successfully"
@@ -132,16 +293,13 @@ const mcpToolImplementations = {
         return `Error retrieving Internship opportunity list: ${error.message}`;
       }
     },
-    { name: "get_io_list", run_type: "tool" }
+    { name: "get_internship_opportunity_list", run_type: "tool" }
   ),
 
   shortlist_intern: traceable(
     async (params) => {
       try {
-        const result = await mcpClient.callTool({
-          name: "shortlist_intern",
-          arguments: params,
-        });
+        const result = await mcpClient.callTool("shortlist_intern", params);
         return result.content[0]?.text || "Intern shortlisted successfully";
       } catch (error) {
         return `Error shortlisting candidate: ${error.message}`;
@@ -341,8 +499,6 @@ workflow.addConditionalEdges(
 );
 
 // Add conditional edge from tools - can either continue to generate more responses or end
-// Replace your existing conditional edge logic with this:
-
 workflow.addConditionalEdges(
   "execute_tools",
   (state) => {
@@ -381,17 +537,9 @@ workflow.addConditionalEdges(
 // Add this new edge to end the workflow
 workflow.addEdge("final_response", "__end__");
 
-// Cleanup function
-async function cleanup() {
-  console.log("\n🧹 Cleaning up...");
-  if (mcpTransport) {
-    await mcpTransport.close();
-  }
-}
-
 // Main function
 async function main() {
-  console.log("🚀 Starting LangGraph with MCP Integration...");
+  console.log("🚀 Starting LangGraph with HTTP MCP Integration...");
 
   // Check for OpenAI API key
   if (!process.env.OPENAI_API_KEY) {
@@ -433,7 +581,6 @@ async function main() {
             console.log(
               "\n👋 Goodbye! Thank you for using the Candidate Recommendation Assistant."
             );
-            await cleanup();
             process.exit(0);
           }
 
@@ -445,7 +592,7 @@ async function main() {
 You have access to these tools:
 - get_candidate_list: Search and filter candidates by various criteria (skills, start dates, duration, projects, career fields, location, etc.)
 - get_career_field_list: Get available career fields in the system
-- get_io_list: Get available internship opportunities
+- get_internship_opportunity_list: Get available internship opportunities
 - shortlist_intern: Shortlist candidates for future reference and consideration
 
 TOOL USAGE GUIDELINES:
@@ -465,29 +612,28 @@ TOOL USAGE GUIDELINES:
      * "Show me candidates in Business field" → First get career fields, find Business ID, then get candidates
      * "Find candidates interested in Software Engineering" → First get career fields, find Software Engineering ID, then get candidates
   
-2. FOR INTERNSHIP OPPORTUNITIES SEARCHES:
+3. FOR INTERNSHIP OPPORTUNITIES SEARCHES:
    - When users ask for candidates by internship opportunity (like "Data science", "Engineering intern")
-   - FIRST call get_io_list to get all available internship opportunity fields
+   - FIRST call get_internship_opportunity_list to get all available internship opportunity fields
    - Find the internship opportunity ID that matches the requested field name
    - THEN call get_candidate_list with the correct internshipOpportunityId parameter
    - Examples:
      * "Show me candidates for data science internship opportunity" → First get internship opportunity, find internship opportunity id, then get candidates
 
-3. FOR DIRECT CANDIDATE SEARCHES:
+4. FOR DIRECT CANDIDATE SEARCHES:
    - When users provide specific criteria (skills, dates, etc.) without career field names
    - Call get_candidate_list directly with the appropriate parameters
    - Examples:
      * "Show me candidates with JavaScript skills" → Call get_candidate_list directly with skillIds
      * "Find candidates available in January 2024" → Call get_candidate_list directly with preferredStartMonths
 
-4. FOR CAREER FIELD INFORMATION:
+5. FOR CAREER FIELD INFORMATION:
    - When users ask about available career fields
    - Call get_career_field_list directly
 
-5. FOR INTERNSHIP OPPORTUNITY INFORMATION:
+6. FOR INTERNSHIP OPPORTUNITY INFORMATION:
    - When users ask about available INTERNSHIP OPPORTUNITIES
-   - Call get_io_list directly   
-
+   - Call get_internship_opportunity_list directly   
 
 IMPORTANT: Use the minimum number of tool calls necessary. Don't gather extra information unless specifically requested by the user.`;
 
@@ -509,7 +655,6 @@ IMPORTANT: Use the minimum number of tool calls necessary. Don't gather extra in
 
             console.log("🚀 Invoking workflow...");
             const result = await app.invoke(initialState);
-            console.log("🚀 ~ result:", result);
             console.log("✅ Workflow completed");
 
             // Get the final response
@@ -538,7 +683,6 @@ IMPORTANT: Use the minimum number of tool calls necessary. Don't gather extra in
     await chat();
   } catch (error) {
     console.error("❌ Application failed to start:", error);
-    await cleanup();
     process.exit(1);
   }
 }
@@ -546,6 +690,5 @@ IMPORTANT: Use the minimum number of tool calls necessary. Don't gather extra in
 // Start the application
 main().catch(async (error) => {
   console.error("❌ Application failed to start:", error);
-  await cleanup();
   process.exit(1);
 });
