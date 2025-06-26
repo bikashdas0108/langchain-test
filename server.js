@@ -354,11 +354,9 @@ app.post("/mcp", async (req, res) => {
 // Start the server
 async function main() {
   app.listen(PORT, () => {
-    console.error(
-      `Interview Scheduler MCP server running on HTTP port ${PORT}`
-    );
-    console.error(`Health check: http://localhost:${PORT}/health`);
-    console.error(`MCP endpoint: http://localhost:${PORT}/mcp`);
+    console.log(`Interview Scheduler MCP server running on HTTP port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
   });
 }
 

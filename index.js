@@ -4,7 +4,6 @@ import readline from "readline/promises";
 import process from "process";
 import { traceable } from "langsmith/traceable";
 import dotenv from "dotenv";
-import fetch from "node-fetch";
 
 dotenv.config();
 
