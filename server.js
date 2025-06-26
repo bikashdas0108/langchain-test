@@ -8,6 +8,25 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
 
+export const objectToQueryString = (obj) =>
+  Object.entries(obj)
+    .filter(([key, value]) => {
+      if (Array.isArray(value) && key) {
+        return value.length > 0;
+      }
+      return value !== undefined && value !== null;
+    })
+    .map(([key, value]) => {
+      if (Array.isArray(value)) {
+        return `${encodeURIComponent(key)}[]=${value
+          .map((item) => encodeURIComponent(item))
+          .join(",")}`;
+      } else {
+        return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+      }
+    })
+    .join("&");
+
 // Create the MCP server
 const server = new Server(
   {
@@ -61,219 +80,347 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "recommend_candidate",
+        name: "get_candidate_list",
         description:
-          "Recommend a candidate to a company for an internship position",
+          "Retrieve a filtered list of candidates based on various criteria including skills, preferred start months, duration, projects, career fields, and more. This provides comprehensive candidate browsing capabilities.",
         inputSchema: {
           type: "object",
           properties: {
-            candidateId: {
-              type: "number",
-              description: "Id of the candidate",
+            skillIds: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Array of skill IDs to filter candidates by their skills",
+              default: [],
             },
-            companyId: {
-              type: "number",
-              description: "Id of the company",
+            preferredStartMonths: {
+              type: "array",
+              items: {
+                type: "string",
+                pattern: "^\\d{1,2}\\/\\d{4}(,\\d{1,2}\\/\\d{4})*$",
+              },
+              description:
+                'Array of preferred start months in MM/YYYY format (e.g., ["01/2024", "02/2024"])',
+              default: [],
             },
-            pocId: {
-              type: "number",
-              description: "Id of the company",
+            durations: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Array of internship durations to filter by",
+              default: [],
+            },
+            projectIds: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Array of project IDs to filter candidates by their projects",
+              default: [],
+            },
+            careerFieldIds: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Array of career field IDs to filter candidates by their career interests",
+              default: [],
+            },
+            internUuids: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Array of specific intern UUIDs to retrieve",
+              default: [],
+            },
+            onlyFilters: {
+              type: "boolean",
+              description:
+                "Boolean flag to return only filter options without candidate data",
+              default: false,
+            },
+            perPage: {
+              type: "string",
+              description: "Number of results to return per page",
+              default: "10",
+            },
+            pageNumber: {
+              type: "string",
+              description: "Page number for pagination (starts from 1)",
+              default: "1",
+            },
+            irIds: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Array of IR (Internal Recruiter) IDs to filter by",
+              default: [],
+            },
+            careerSkillName: {
+              type: "string",
+              description: "Search by career skill name",
+            },
+            wantToLearnCareerFieldSkillName: {
+              type: "string",
+              description: "Search by skills the candidate wants to learn",
+            },
+            projectsDescription: {
+              type: "string",
+              description: "Search within project descriptions",
+            },
+            aboutMe: {
+              type: "string",
+              description: 'Search within candidate "about me" sections',
+            },
+            countryIds: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Array of country IDs to filter candidates by location",
+              default: [],
+            },
+            universityName: {
+              type: "string",
+              description: "Search by university name",
+            },
+            pastExperience: {
+              type: "string",
+              description: "Search within past experience descriptions",
+            },
+            portfolio: {
+              type: "string",
+              description: "Search within portfolio information",
             },
           },
-          required: ["candidateId", "companyId", "pocId"],
+          additionalProperties: false,
         },
       },
       {
-        name: "schedule_interview",
-        description: "Schedule an interview between candidate and company",
+        name: "get_career_field_list",
+        description:
+          "Retrieve a list of all available career fields in the system. This can be used to get career field IDs and names for filtering candidates or understanding available career options.",
         inputSchema: {
           type: "object",
           properties: {
-            internshipOpportunityId: {
-              type: "number",
-              description: "ID of the job description",
+            type: {
+              type: "string",
+              description: 'Type of career fields to retrieve (e.g., "global")',
+              default: "global",
             },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "shortlist_intern",
+        description:
+          "Add an intern to the shortlist for a host company. This allows companies to save promising candidates for future reference and consideration.",
+        parameters: {
+          type: "object",
+          properties: {
             internId: {
-              type: "number",
-              description: "ID of the candidate",
-            },
-            interviewLink: {
-              type: "string",
-              description: "Interview link for the interview",
-            },
-            interviewerId: {
-              type: "string",
-              description: "Interviewer id who is conducting the interview",
-            },
-            startTime: {
-              type: "string",
-              description: "Interview start date and time (ISO format)",
-            },
-            endTime: {
-              type: "string",
-              description: "Interview end date and time (ISO format)",
-            },
-          },
-          required: [
-            "internshipOpportunityId",
-            "internId",
-            "interviewLink",
-            "interviewerId",
-            "startTime",
-            "endTime",
-          ],
-        },
-      },
-      {
-        name: "cancel_interview",
-        description: "Cancel a scheduled interview",
-        inputSchema: {
-          type: "object",
-          properties: {
-            interviewId: {
-              type: "number",
-              description: "ID of the interview to cancel",
-            },
-            cancelledBy: {
               type: "string",
               description:
-                "Who is cancelling the interview (e.g., 'Intern', 'HC')",
+                "The unique identifier of the intern to be shortlisted",
             },
           },
-          required: ["interviewId", "cancelledBy"],
+          required: ["internId"],
+          additionalProperties: false,
         },
       },
     ],
   };
 });
 
-// Handle recommend candidate tool
-async function handleRecommendCandidate(args) {
+async function getCandidateList(args) {
   try {
-    const recommendationData = {
-      flow_type: "COMPANY_INTERN",
-      comment: "Recommendation from MCP server",
-      email_subject: "Recommendation from MCP server",
-      email_body_bottom: "&",
-      email_body_top:
-        '<style>.ql-align-center {\n         text-align: center !important;\n      }</style><div style="font-size:14px;font-family:\'Open Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;mso-line-height-alt:18px;line-height:1.5;padding-left:0px;padding-right:25px;margin-top:12px"><p>Trust you are doing great.</p><p><br></p><p>My name is Prajwal Bhatia, and I was going through your company\'s account on Virtual Internships.</p><p><br></p><p><strong>*Replace with reasons for recommending the below profiles and how they would be a good fit for the company*</strong></p><p><br></p><p>I have just the right candidates for you:</p><p><br></p><ul><li>Meet <a href="http://localhost:3001/intern-profile/8b3c5212-0bb0-48d0-bc90-713b42abc837" rel="noopener noreferrer" target="_blank" style="color: rgb(0, 115, 230);">Marina Oliveira</a> 👈 <strong>*replace with candidate’s profile summary - ensure it’s aligned with the company*</strong></li></ul><p><br></p><p>I am certain they will be a great fit at your company.</p><p><br></p><p>You may check out their profile using the links above and set up an interview with them if everything seems to be in order.</p><p><br></p><p>In case of any questions, please feel free to reply to this email. I will be on standby.</p><p><br></p><p>Regards,</p><p>Prajwal Bhatia</p></div>',
-      recommendation_data: [
-        {
-          intern_id: args.candidateId,
-          career_field_id: 1,
-          batch_id: 149,
-          application_id: 1205,
-          host_companies: [
-            {
-              host_company_id: args.companyId,
-            },
-          ],
-        },
-      ],
-      pocs: [
-        {
-          host_company_id: args.companyId,
-          poc_id: args.pocId,
-        },
-      ],
+    const candidateQuery = {};
+
+    // Helper functions to conditionally add fields
+    const addIfTruthy = (key, value) => {
+      if (value) candidateQuery[key] = value;
     };
 
-    const result = await makeApiCall(
-      "/api/v1/internal-service/recommendation",
-      "POST",
-      recommendationData
+    const addIfArray = (key, value) => {
+      if (Array.isArray(value) && value.length > 0) {
+        candidateQuery[key] = value;
+      }
+    };
+
+    // Add query params conditionally
+    addIfArray("skill_ids", args.skillIds);
+    addIfArray("preferred_start_months", args.preferredStartMonths);
+    addIfArray("durations", args.durations);
+    addIfArray("project_ids", args.projectIds);
+    addIfArray("career_field_ids", args.careerFieldIds);
+    addIfArray("intern_uuids", args.internUuids);
+    addIfArray("ir_ids", args.irIds);
+    addIfArray("country_ids", args.countryIds);
+
+    addIfTruthy("onlyFilters", args.onlyFilters);
+    addIfTruthy("per_page", args.perPage || "10");
+    addIfTruthy("page_number", args.pageNumber || "1");
+
+    addIfTruthy("career_skill_name", args.careerSkillName);
+    addIfTruthy(
+      "want_to_learn_career_field_skill_name",
+      args.wantToLearnCareerFieldSkillName
     );
+    addIfTruthy("projects_description", args.projectsDescription);
+    addIfTruthy("about_me", args.aboutMe);
+    addIfTruthy("university_name", args.universityName);
+    addIfTruthy("past_experience", args.pastExperience);
+    addIfTruthy("portfolio", args.portfolio);
+
+    const queryString = objectToQueryString(candidateQuery);
+    const updatedUrl = `/host-company/browse/candidates?${queryString}`;
+
+    const candidates = await makeApiCall(updatedUrl, "GET");
+
+    const totalCandidates = candidates.data?.length || 0;
+    const pagination = candidates.pagination || {};
 
     return {
       content: [
         {
           type: "text",
-          text: `Successfully recommended candidate "${
-            args.candidateName
-          }" to company "${args.companyName}". 
-                 
+          text: `Found ${totalCandidates} candidates matching your criteria:
 
-API Response: ${JSON.stringify(result, null, 2)}`,
+**Query Parameters:**
+- Skill IDs: ${args.skillIds?.join(", ") || "None"}
+- Preferred Start Months: ${args.preferredStartMonths?.join(", ") || "None"}
+- Durations: ${args.durations?.join(", ") || "None"}
+- Project IDs: ${args.projectIds?.join(", ") || "None"}
+- Career Field IDs: ${args.careerFieldIds?.join(", ") || "None"}
+- Page: ${args.pageNumber || "1"}
+- Results per page: ${args.perPage || "10"}
+- Only Filters: ${args.onlyFilters || false}
+
+**Search Terms:**
+- Career Skill Name: ${args.careerSkillName || "None"}
+- Want to Learn: ${args.wantToLearnCareerFieldSkillName || "None"}
+- Projects Description: ${args.projectsDescription || "None"}
+- About Me: ${args.aboutMe || "None"}
+- University Name: ${args.universityName || "None"}
+- Past Experience: ${args.pastExperience || "None"}
+- Portfolio: ${args.portfolio || "None"}
+
+**Pagination Info:**
+- Current Page: ${pagination.current_page || args.pageNumber || "1"}
+- Total Pages: ${pagination.total_pages || "N/A"}
+- Total Records: ${pagination.total_records || "N/A"}
+
+**Results:**
+${JSON.stringify(candidates, null, 2)}`,
         },
       ],
     };
   } catch (error) {
     throw new McpError(
       ErrorCode.InternalError,
-      `Failed to create recommendation: ${error.message}`
+      `Failed to retrieve candidate list: ${error.message}`
     );
   }
 }
 
-// Handle schedule interview tool
-async function handleScheduleInterview(args) {
-  try {
-    const interviewData = {
-      internship_opportunity_id: args.internshipOpportunityId,
-      intern_id: args.internId,
-      interview_link: args.interviewLink,
-      meeting_passcode: null,
-      interviewer_id: args.interviewerId,
-      interview_timeslots: {
-        start_date_time: args.startTime,
-        end_date_time: args.endTime,
-        interview_duration: 60,
-      },
-      is_log_interview: 0,
-      is_generate_meeting_link: 0,
-    };
 
-    const result = await makeApiCall(
-      "/api/v1/internal-service/host-company/interview",
-      "POST",
-      interviewData
+async function getCareerFieldList(args) {
+  try {
+    const careerField = await makeApiCall(
+      `/common-services/career-field/get-list`,
+      "GET",
+      {}
     );
+    // Format the response for better readability
+    const careerFieldCount = careerField.data?.payload?.length || 0;
 
     return {
       content: [
         {
           type: "text",
-          text: `Successfully scheduled interview!
+          text: `Found ${careerFieldCount} career fields:
 
-API Response: ${JSON.stringify(result, null, 2)}`,
+**Query Parameters:**
+- Type: ${args.type || "global"}
+
+**Results:**
+${JSON.stringify(careerField.data?.payload, null, 2)}`,
         },
       ],
     };
   } catch (error) {
     throw new McpError(
       ErrorCode.InternalError,
-      `Failed to schedule interview: ${error} ${error.message}`
+      `Failed to retrieve career field list: ${error.message}`
     );
   }
 }
 
-// Handle cancel interview tool
-async function handleCancelInterview(args) {
+async function getIoList(args) {
   try {
-    const cancelData = {
-      cancelled_by: args.cancelledBy || "Intern",
-    };
-
-    const result = await makeApiCall(
-      `/api/v1/internal-service/host-company/interview/${args.interviewId}/cancel`,
-      "PATCH",
-      cancelData
+    const ioList = await makeApiCall(
+      `/host-company/browse-intern/get-io-list?with_career_field=1`,
+      "GET",
+      {}
     );
+    // Format the response for better readability
+    const ioCount = ioList.data?.payload?.length || 0;
 
     return {
       content: [
         {
           type: "text",
-          text: `Successfully cancelled interview!
+          text: `Found ${ioCount} Internship Opportunities (IOs):
 
-API Response: ${JSON.stringify(result, null, 2)}`,
+**Query Parameters:**
+- Type: ${args.type || "global"}
+
+**Results:**
+${JSON.stringify(ioList.data?.payload, null, 2)}`,
         },
       ],
     };
   } catch (error) {
     throw new McpError(
       ErrorCode.InternalError,
-      `Failed to cancel interview: ${error} ${error.message}`
+      `Failed to retrieve io list: ${error.message}`
+    );
+  }
+}
+
+async function shortListIntern(args) {
+  const body = {
+    intern_id: Number(args.internId),
+  };
+
+  try {
+    const careerField = await makeApiCall(
+      `/host-company/browse-intern/save-shortlist-intern`,
+      "POST",
+      body
+    );
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Successfully shortlisted intern with ID: ${args.internId}`,
+        },
+      ],
+    };
+  } catch (error) {
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to retrieve career field list: ${error.message}`
     );
   }
 }
@@ -283,12 +430,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {
-    case "recommend_candidate":
-      return await handleRecommendCandidate(args);
-    case "schedule_interview":
-      return await handleScheduleInterview(args);
-    case "cancel_interview":
-      return await handleCancelInterview(args);
+    case "get_candidate_list":
+      return await getCandidateList(args);
+    case "get_io_list":
+      return await getIoList(args);
+    case "get_career_field_list":
+      return await getCareerFieldList(args);
+    case "shortlist_intern":
+      return await shortListIntern(args);
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
   }
@@ -298,7 +447,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Interview Scheduler MCP server running on stdio");
+  console.error("Intern list MCP server running on stdio");
 }
 
 main().catch((error) => {

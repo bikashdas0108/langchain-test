@@ -61,6 +61,12 @@ const stateSchema = {
   result: {
     value: null,
   },
+  toolCallCount: {
+    value: 0, // Track number of tool call rounds
+  },
+  maxToolCalls: {
+    value: 3, // Maximum number of tool call rounds to prevent infinite loops
+  },
 };
 
 // Function to convert MCP tools to OpenAI format
@@ -77,80 +83,71 @@ function convertMCPToolsToOpenAI(mcpTools) {
 
 // MCP tool implementations
 const mcpToolImplementations = {
-  recommend_candidate: traceable(
+  get_candidate_list: traceable(
     async (params) => {
       try {
         const result = await mcpClient.callTool({
-          name: "recommend_candidate",
+          name: "get_candidate_list",
           arguments: params,
         });
-        return {
-          result:
-            result.content[0]?.text || "Recommendation completed successfully",
-        };
+        return (
+          result.content[0]?.text || "Candidate list retrieved successfully"
+        );
       } catch (error) {
-        return {
-          result: `Error recommending candidate: ${error.message}`,
-        };
+        return `Error retrieving candidate list: ${error.message}`;
       }
     },
-    { name: "recommend_candidate", run_type: "tool" }
+    { name: "get_candidate_list", run_type: "tool" }
   ),
 
-  schedule_interview: traceable(
+  get_career_field_list: traceable(
     async (params) => {
       try {
         const result = await mcpClient.callTool({
-          name: "schedule_interview",
+          name: "get_career_field_list",
           arguments: params,
         });
-        return {
-          result: result.content[0]?.text || "Interview scheduled successfully",
-        };
+        return (
+          result.content[0]?.text || "Career field list retrieved successfully"
+        );
       } catch (error) {
-        return {
-          result: `Error scheduling interview: ${error.message}`,
-        };
+        return `Error retrieving career field list: ${error.message}`;
       }
     },
-    { name: "schedule_interview", run_type: "tool" }
+    { name: "get_career_field_list", run_type: "tool" }
   ),
 
-  cancel_interview: traceable(
+  get_io_list: traceable(
     async (params) => {
       try {
         const result = await mcpClient.callTool({
-          name: "cancel_interview",
+          name: "get_io_list",
           arguments: params,
         });
-
-        // Check if the result contains an error
-        if (result.error) {
-          return {
-            result: result.content[0].text,
-            success: false,
-            error: true,
-          };
-        }
-
-        return {
-          result: result.content[0]?.text || "Interview cancelled successfully",
-          success: true,
-        };
+        return (
+          result.content[0]?.text ||
+          "Internship opportunity list retrieved successfully"
+        );
       } catch (error) {
-        // Log the error for debugging
-        console.error("Error in cancel_interview:", error);
-
-        // Return the raw error message for AI interpretation
-        return {
-          result: `Error cancelling interview: ${error.message}`,
-          success: false,
-          error: true,
-          rawError: error.message,
-        };
+        return `Error retrieving Internship opportunity list: ${error.message}`;
       }
     },
-    { name: "cancel_interview", run_type: "tool" }
+    { name: "get_io_list", run_type: "tool" }
+  ),
+
+  shortlist_intern: traceable(
+    async (params) => {
+      try {
+        const result = await mcpClient.callTool({
+          name: "shortlist_intern",
+          arguments: params,
+        });
+        return result.content[0]?.text || "Intern shortlisted successfully";
+      } catch (error) {
+        return `Error shortlisting candidate: ${error.message}`;
+      }
+    },
+    { name: "shortlist_intern", run_type: "tool" }
   ),
 };
 
@@ -166,6 +163,27 @@ workflow.addNode(
   "generate_response",
   traceable(
     async (state) => {
+      // Check if we've exceeded maximum tool calls to prevent infinite loops
+      if (state.toolCallCount >= state.maxToolCalls) {
+        console.log(
+          "⚠️ Maximum tool call limit reached, generating final response"
+        );
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content:
+                "I've reached the maximum number of tool calls. Let me provide a response based on the information I've gathered so far.",
+            },
+          ],
+          result: {
+            role: "assistant",
+            content:
+              "I've reached the maximum number of tool calls. Let me provide a response based on the information I've gathered so far.",
+          },
+        };
+      }
+
       const response = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: state.messages,
@@ -175,9 +193,22 @@ workflow.addNode(
 
       const responseMessage = response.choices[0].message;
 
+      if (responseMessage.tool_calls) {
+        console.log("🔍 LLM decided to make tool calls:");
+        responseMessage.tool_calls.forEach((toolCall, index) => {
+          console.log(`  ${index + 1}. ${toolCall.function.name}`);
+          console.log(`     Arguments: ${toolCall.function.arguments}`);
+        });
+      } else {
+        console.log("🔍 LLM decided not to make any tool calls");
+      }
+
       return {
         messages: [responseMessage], // Return new messages to be merged
         result: responseMessage,
+        toolCallCount: responseMessage.tool_calls
+          ? state.toolCallCount + 1
+          : state.toolCallCount,
       };
     },
     { name: "generate_response_llm", run_type: "llm" }
@@ -209,9 +240,7 @@ workflow.addNode(
             tool_call_id: toolCall.id,
             role: "tool",
             name: toolName,
-            content: JSON.stringify({
-              result: `Error parsing arguments: ${parseError.message}`,
-            }),
+            content: `Error parsing arguments: ${parseError.message}`,
           });
           continue;
         }
@@ -224,7 +253,7 @@ workflow.addNode(
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolName,
-              content: JSON.stringify(output.result),
+              content: output, // Direct output, no JSON wrapping
             });
           } catch (toolError) {
             console.error(`❌ Error executing tool ${toolName}:`, toolError);
@@ -232,9 +261,7 @@ workflow.addNode(
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolName,
-              content: JSON.stringify({
-                result: `Tool execution error: ${toolError.message}`,
-              }),
+              content: `Tool execution error: ${toolError.message}`,
             });
           }
         } else {
@@ -244,7 +271,7 @@ workflow.addNode(
             tool_call_id: toolCall.id,
             role: "tool",
             name: toolName,
-            content: JSON.stringify({ result: `Tool ${toolName} not found` }),
+            content: `Tool ${toolName} not found`,
           });
         }
       }
@@ -261,75 +288,25 @@ workflow.addNode(
   "final_response",
   traceable(
     async (state) => {
-      // Get all tool outputs and their corresponding tool calls
+      // Check if we have tool outputs to process
       const toolOutputs = state.messages.filter((msg) => msg.role === "tool");
-      const toolCalls = state.messages
-        .filter((msg) => msg.tool_calls)
-        .flatMap((msg) => msg.tool_calls);
 
       if (toolOutputs.length > 0) {
-        try {
-          // Create a summary of all operations
-          const operations = toolOutputs.map((output, index) => {
-            const toolCall = toolCalls[index];
-            const toolResult = JSON.parse(output.content);
+        // Include ALL messages in the conversation, including tool responses
+        // This ensures the conversation flow is maintained for OpenAI API
+        const response = await openai.chat.completions.create({
+          model: "gpt-3.5-turbo",
+          messages: state.messages, // Include all messages including tool responses
+          temperature: 0.7,
+        });
 
-            return {
-              operation: toolCall.function.name,
-              params: JSON.parse(toolCall.function.arguments),
-              result: toolResult.result,
-              success: toolResult.success,
-              error: toolResult.error,
-              rawError: toolResult.rawError,
-            };
-          });
-
-          // Create a context message for the AI
-          const contextMessage = {
-            role: "system",
-            content: `You are a helpful assistant summarizing multiple operations. Here are all the operations that were performed:
-
-${operations
-  .map(
-    (op) => `
-Operation: ${op.operation}
-Parameters: ${JSON.stringify(op.params)}
-Result: ${op.result}
-${op.rawError ? `Raw Error: ${op.rawError}` : ""}
-`
-  )
-  .join("\n")}
-
-Please provide a natural, conversational response that:
-1. Summarizes all operations performed in sequence
-2. For each operation:
-   - If successful, confirm what was done and include relevant details
-   - If there was an error:
-     * Analyze the raw error message to understand what went wrong
-     * Explain the error in natural language
-     * Suggest what the user can do to resolve the issue
-3. Keep the response concise but informative
-4. Use natural language to connect the operations (e.g., "First, I... Then, I...")
-5. If there are API errors, explain them in terms of what they mean for the user's request`,
-          };
-
-          // Generate a natural response using the AI
-          const response = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [contextMessage],
-            temperature: 0.7,
-          });
-
-          return {
-            messages: [response.choices[0].message],
-            result: response.choices[0].message,
-          };
-        } catch (e) {
-          console.error("Error parsing tool outputs:", e);
-        }
+        return {
+          messages: [response.choices[0].message],
+          result: response.choices[0].message,
+        };
       }
 
-      // If no tool output or parsing failed, generate a response
+      // If no tool output, generate a response normally
       const response = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: state.messages,
@@ -351,15 +328,55 @@ workflow.setEntryPoint("generate_response");
 // Add conditional edges with proper configuration
 workflow.addConditionalEdges(
   "generate_response",
-  (state) => (state.result?.tool_calls ? "execute_tools" : "__end__"),
+  (state) => {
+    if (state.result?.tool_calls) {
+      return "execute_tools";
+    }
+    return "__end__";
+  },
   {
     execute_tools: "execute_tools",
     __end__: "__end__",
   }
 );
 
-// Add edge from tools back to generation
-workflow.addEdge("execute_tools", "final_response");
+// Add conditional edge from tools - can either continue to generate more responses or end
+// Replace your existing conditional edge logic with this:
+
+workflow.addConditionalEdges(
+  "execute_tools",
+  (state) => {
+    const hasToolResults = state.messages.some((msg) => msg.role === "tool");
+    const reachedMaxCalls = state.toolCallCount >= state.maxToolCalls;
+
+    // Get the last assistant message that had tool calls
+    const lastAssistantMessage = state.messages
+      .filter((msg) => msg.role === "assistant" && msg.tool_calls)
+      .pop();
+
+    // Check if the last tool calls were for "simple" operations that don't need follow-up
+    const simpleOperations = ["shortlist_intern"]; // Add other simple operations here
+    const hasOnlySimpleOperations = lastAssistantMessage?.tool_calls?.every(
+      (toolCall) => simpleOperations.includes(toolCall.function.name)
+    );
+
+    // If we have tool results but they're from simple operations, go to final response
+    if (hasToolResults && hasOnlySimpleOperations) {
+      return "final_response";
+    }
+
+    // For complex operations, continue conversation if under max calls
+    if (hasToolResults && !reachedMaxCalls) {
+      return "continue_conversation";
+    }
+
+    return "final_response";
+  },
+  {
+    continue_conversation: "generate_response",
+    final_response: "final_response",
+  }
+);
 
 // Add this new edge to end the workflow
 workflow.addEdge("final_response", "__end__");
@@ -403,7 +420,10 @@ async function main() {
       output: process.stdout,
     });
 
-    console.log('🤖 Internship Assistant with MCP: Type "exit" to quit\n');
+    console.log('🤖 Candidate Recommendation Assistant: Type "exit" to quit\n');
+    console.log(
+      '💡 Try asking: "Show me candidates in Business field" or "Get candidates in Engineering"\n'
+    );
 
     const chat = traceable(
       async () => {
@@ -411,7 +431,7 @@ async function main() {
           const query = await rl.question("\nYou: ");
           if (query.toLowerCase() === "exit") {
             console.log(
-              "\n👋 Goodbye! Thank you for using the Internship Assistant."
+              "\n👋 Goodbye! Thank you for using the Candidate Recommendation Assistant."
             );
             await cleanup();
             process.exit(0);
@@ -420,12 +440,62 @@ async function main() {
           try {
             console.log("🔍 Processing query:", query);
 
+            const systemPrompt = `You are a helpful candidate recommendation assistant. You help users find and browse candidates for internship positions. 
+
+You have access to these tools:
+- get_candidate_list: Search and filter candidates by various criteria (skills, start dates, duration, projects, career fields, location, etc.)
+- get_career_field_list: Get available career fields in the system
+- get_io_list: Get available internship opportunities
+- shortlist_intern: Shortlist candidates for future reference and consideration
+
+TOOL USAGE GUIDELINES:
+
+1. FOR SHORTLISTING OPERATIONS:
+   - When users ask to "shortlist intern with ID X" or similar direct shortlisting requests
+   - ONLY call shortlist_intern with the provided intern ID
+   - Do NOT call get_candidate_list or other tools first
+   - Example: "Shortlist intern with ID 1398" → Call shortlist_intern with internId: "1398"
+
+2. FOR CAREER FIELD SEARCHES:
+   - When users ask for candidates by career field NAME (like "Business", "Engineering", "Marketing")
+   - FIRST call get_career_field_list to get all available career fields
+   - Find the career field ID that matches the requested field name
+   - THEN call get_candidate_list with the correct careerFieldIds parameter
+   - Examples:
+     * "Show me candidates in Business field" → First get career fields, find Business ID, then get candidates
+     * "Find candidates interested in Software Engineering" → First get career fields, find Software Engineering ID, then get candidates
+  
+2. FOR INTERNSHIP OPPORTUNITIES SEARCHES:
+   - When users ask for candidates by internship opportunity (like "Data science", "Engineering intern")
+   - FIRST call get_io_list to get all available internship opportunity fields
+   - Find the internship opportunity ID that matches the requested field name
+   - THEN call get_candidate_list with the correct internshipOpportunityId parameter
+   - Examples:
+     * "Show me candidates for data science internship opportunity" → First get internship opportunity, find internship opportunity id, then get candidates
+
+3. FOR DIRECT CANDIDATE SEARCHES:
+   - When users provide specific criteria (skills, dates, etc.) without career field names
+   - Call get_candidate_list directly with the appropriate parameters
+   - Examples:
+     * "Show me candidates with JavaScript skills" → Call get_candidate_list directly with skillIds
+     * "Find candidates available in January 2024" → Call get_candidate_list directly with preferredStartMonths
+
+4. FOR CAREER FIELD INFORMATION:
+   - When users ask about available career fields
+   - Call get_career_field_list directly
+
+5. FOR INTERNSHIP OPPORTUNITY INFORMATION:
+   - When users ask about available INTERNSHIP OPPORTUNITIES
+   - Call get_io_list directly   
+
+
+IMPORTANT: Use the minimum number of tool calls necessary. Don't gather extra information unless specifically requested by the user.`;
+
             const initialState = {
               messages: [
                 {
                   role: "system",
-                  content:
-                    "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. You have access to MCP tools for recommending candidates, scheduling interviews, and canceling interviews with external systems. When canceling interviews, use the cancel_interview tool with the interview ID and who is canceling (Intern or HC). Be concise and helpful.",
+                  content: systemPrompt,
                 },
                 {
                   role: "user",
@@ -433,10 +503,13 @@ async function main() {
                 },
               ],
               result: null,
+              toolCallCount: 0,
+              maxToolCalls: 3,
             };
 
             console.log("🚀 Invoking workflow...");
             const result = await app.invoke(initialState);
+            console.log("🚀 ~ result:", result);
             console.log("✅ Workflow completed");
 
             // Get the final response
@@ -450,7 +523,7 @@ async function main() {
                 ? assistantMessages[assistantMessages.length - 1].content
                 : "I couldn't process that request.";
 
-            console.log(`🤖: ${finalResponse}`);
+            console.log(`\n🤖 Assistant: ${finalResponse}`);
           } catch (error) {
             console.error("❌ Chat error details:", error);
             console.error("❌ Stack trace:", error.stack);
