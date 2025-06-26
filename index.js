@@ -4,8 +4,7 @@ import readline from "readline/promises";
 import process from "process";
 import { traceable } from "langsmith/traceable";
 import dotenv from "dotenv";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -14,30 +13,154 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Custom MCP HTTP client
+class MCPHTTPClient {
+  constructor(serverUrl) {
+    this.serverUrl = serverUrl;
+    this.sessionId = null;
+  }
+
+  async initialize() {
+    const response = await fetch(this.serverUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "1",
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: {
+            name: "langraph-mcp-client",
+            version: "0.1.0",
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const sessionId = response.headers.get("mcp-session-id");
+    if (sessionId) {
+      this.sessionId = sessionId;
+    }
+
+    const data = await response.text();
+    const lines = data.split("\n").filter((line) => line.trim());
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const jsonData = JSON.parse(line.substring(6));
+        if (jsonData.result) {
+          return jsonData.result;
+        }
+      }
+    }
+
+    throw new Error("Failed to initialize MCP connection");
+  }
+
+  async listTools() {
+    if (!this.sessionId) {
+      throw new Error("Not initialized. Call initialize() first.");
+    }
+
+    const response = await fetch(this.serverUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "mcp-session-id": this.sessionId,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "2",
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.text();
+    const lines = data.split("\n").filter((line) => line.trim());
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const jsonData = JSON.parse(line.substring(6));
+        if (jsonData.result) {
+          return jsonData.result;
+        }
+      }
+    }
+
+    throw new Error("Failed to list tools");
+  }
+
+  async callTool(name, arguments_) {
+    if (!this.sessionId) {
+      throw new Error("Not initialized. Call initialize() first.");
+    }
+
+    const response = await fetch(this.serverUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "mcp-session-id": this.sessionId,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "3",
+        method: "tools/call",
+        params: {
+          name: name,
+          arguments: arguments_,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.text();
+    const lines = data.split("\n").filter((line) => line.trim());
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const jsonData = JSON.parse(line.substring(6));
+        if (jsonData.result) {
+          return jsonData.result;
+        }
+        if (jsonData.error) {
+          throw new Error(jsonData.error.message);
+        }
+      }
+    }
+
+    throw new Error("Failed to call tool");
+  }
+}
+
 // MCP client setup
 let mcpClient;
-let mcpTransport;
 
 // Initialize MCP connection
 async function initializeMCP() {
   try {
-    mcpTransport = new StdioClientTransport({
-      command: "node",
-      args: ["server.js"],
-    });
+    mcpClient = new MCPHTTPClient("http://localhost:3000/mcp");
 
-    mcpClient = new Client(
-      {
-        name: "langraph-mcp-client",
-        version: "0.1.0",
-      },
-      {
-        capabilities: {},
-      }
-    );
-
-    await mcpClient.connect(mcpTransport);
-    console.log("✅ Connected to MCP server");
+    await mcpClient.initialize();
+    console.log("✅ Connected to MCP HTTP server");
 
     const tools = await mcpClient.listTools();
     console.log("📋 Available MCP tools:");
@@ -80,10 +203,7 @@ const mcpToolImplementations = {
   recommend_candidate: traceable(
     async (params) => {
       try {
-        const result = await mcpClient.callTool({
-          name: "recommend_candidate",
-          arguments: params,
-        });
+        const result = await mcpClient.callTool("recommend_candidate", params);
         return {
           result:
             result.content[0]?.text || "Recommendation completed successfully",
@@ -95,62 +215,6 @@ const mcpToolImplementations = {
       }
     },
     { name: "recommend_candidate", run_type: "tool" }
-  ),
-
-  schedule_interview: traceable(
-    async (params) => {
-      try {
-        const result = await mcpClient.callTool({
-          name: "schedule_interview",
-          arguments: params,
-        });
-        return {
-          result: result.content[0]?.text || "Interview scheduled successfully",
-        };
-      } catch (error) {
-        return {
-          result: `Error scheduling interview: ${error.message}`,
-        };
-      }
-    },
-    { name: "schedule_interview", run_type: "tool" }
-  ),
-
-  cancel_interview: traceable(
-    async (params) => {
-      try {
-        const result = await mcpClient.callTool({
-          name: "cancel_interview",
-          arguments: params,
-        });
-
-        // Check if the result contains an error
-        if (result.error) {
-          return {
-            result: result.content[0].text,
-            success: false,
-            error: true,
-          };
-        }
-
-        return {
-          result: result.content[0]?.text || "Interview cancelled successfully",
-          success: true,
-        };
-      } catch (error) {
-        // Log the error for debugging
-        console.error("Error in cancel_interview:", error);
-
-        // Return the raw error message for AI interpretation
-        return {
-          result: `Error cancelling interview: ${error.message}`,
-          success: false,
-          error: true,
-          rawError: error.message,
-        };
-      }
-    },
-    { name: "cancel_interview", run_type: "tool" }
   ),
 };
 
@@ -367,8 +431,8 @@ workflow.addEdge("final_response", "__end__");
 // Cleanup function
 async function cleanup() {
   console.log("\n🧹 Cleaning up...");
-  if (mcpTransport) {
-    await mcpTransport.close();
+  if (mcpClient) {
+    // No need to close the custom client
   }
 }
 
@@ -403,7 +467,9 @@ async function main() {
       output: process.stdout,
     });
 
-    console.log('🤖 Internship Assistant with MCP: Type "exit" to quit\n');
+    console.log(
+      '🤖 Internship Assistant with MCP HTTP Server: Type "exit" to quit\n'
+    );
 
     const chat = traceable(
       async () => {
@@ -425,7 +491,7 @@ async function main() {
                 {
                   role: "system",
                   content:
-                    "You are a helpful internship assistant. Help users with scheduling, canceling, and checking upcoming interviews, as well as internship requirements. You have access to MCP tools for recommending candidates, scheduling interviews, and canceling interviews with external systems. When canceling interviews, use the cancel_interview tool with the interview ID and who is canceling (Intern or HC). Be concise and helpful.",
+                    "You are a helpful internship assistant. Help users with recommending candidates for internship positions. You have access to the recommend_candidate MCP tool that can recommend a candidate to a company for an internship position. The tool requires candidateId, companyId, and pocId parameters. Be concise and helpful.",
                 },
                 {
                   role: "user",

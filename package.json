@@ -17,11 +17,12 @@
     "zod": "^3.24.4",
     "typescript": "^5.0.0"
   },
-    "main": "build/index.js",
-    "scripts": {
-      "build": "tsc",
-      "start": "node build/index.js",
-      "dev": "tsc && node build/index.js",
-      "cli": "tsc && node build/cli.js"
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc && node build/index.js",
+    "cli": "tsc && node build/cli.js",
+    "server:http": "TRANSPORT_TYPE=http node server.js"
   }
 }
