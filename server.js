@@ -409,10 +409,7 @@ export class MCPServer {
           case "shortlist_intern":
             return await this.shortListIntern(args);
           default:
-            throw new McpError(
-              ErrorCode.MethodNotFound,
-              `Unknown tool: ${name}`
-            );
+            return this.createErrorResponse(`Unknown tool: ${name}`);
         }
       }
     );
@@ -463,7 +460,6 @@ export class MCPServer {
 
       const candidates = await makeApiCall(updatedUrl, "GET");
 
-      const totalCandidates = candidates.data?.length || 0;
       const pagination = candidates.pagination || {};
 
       const updatedCandidates = {
@@ -471,6 +467,7 @@ export class MCPServer {
         list: candidates.data?.payload?.list?.map((item) => ({
           full_name: item.full_name,
           phone_number: item.phone_number,
+          intern_id: item.application?.intern_id,
           application: {
             application_id: item.application?.application_id,
             application_status: item.application?.application_status,
@@ -486,31 +483,9 @@ export class MCPServer {
         content: [
           {
             type: "text",
-            text: `Found ${totalCandidates} candidates matching your criteria:
-
-**Query Parameters:**
-- Skill IDs: ${args.skillIds?.join(", ") || "None"}
-- Preferred Start Months: ${args.preferredStartMonths?.join(", ") || "None"}
-- Durations: ${args.durations?.join(", ") || "None"}
-- Project IDs: ${args.projectIds?.join(", ") || "None"}
-- Career Field IDs: ${args.careerFieldIds?.join(", ") || "None"}
-- Page: ${args.pageNumber || "1"}
-- Results per page: ${args.perPage || "10"}
-- Only Filters: ${args.onlyFilters || false}
-
-**Search Terms:**
-- Career Skill Name: ${args.careerSkillName || "None"}
-- Want to Learn: ${args.wantToLearnCareerFieldSkillName || "None"}
-- Projects Description: ${args.projectsDescription || "None"}
-- About Me: ${args.aboutMe || "None"}
-- University Name: ${args.universityName || "None"}
-- Past Experience: ${args.pastExperience || "None"}
-- Portfolio: ${args.portfolio || "None"}
-
-**Pagination Info:**
-- Current Page: ${pagination.current_page || args.pageNumber || "1"}
-- Total Pages: ${pagination.total_pages || "N/A"}
-- Total Records: ${pagination.total_records || "N/A"}
+            text: `Found ${
+              updatedCandidates.count
+            } candidates matching your criteria:
 
 **Results:**
 ${JSON.stringify(updatedCandidates, null, 2)}`,
@@ -518,8 +493,7 @@ ${JSON.stringify(updatedCandidates, null, 2)}`,
         ],
       };
     } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
+      return this.createErrorResponse(
         `Failed to retrieve candidate list: ${error.message}`
       );
     }
@@ -553,8 +527,7 @@ ${JSON.stringify(updatedCFs, null, 2)}`,
         ],
       };
     } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
+      return this.createErrorResponse(
         `Failed to retrieve career field list: ${error.message}`
       );
     }
@@ -590,8 +563,7 @@ ${JSON.stringify(updatedIoList, null, 2)}`,
         ],
       };
     } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
+      return this.createErrorResponse(
         `Failed to retrieve internship opportunities list: ${error.message}`
       );
     }
@@ -652,8 +624,7 @@ ${JSON.stringify(updatedProjectList, null, 2)}`,
         ],
       };
     } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
+      return this.createErrorResponse(
         `Failed to retrieve project list: ${error.message}`
       );
     }
@@ -680,8 +651,7 @@ ${JSON.stringify(updatedProjectList, null, 2)}`,
         ],
       };
     } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
+      return this.createErrorResponse(
         `Failed to shortlist intern: ${error.message}`
       );
     }
