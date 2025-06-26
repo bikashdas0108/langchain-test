@@ -27,102 +27,197 @@ class MCPHTTPClient {
     this.sessionId = null;
   }
 
-async makeRequest(method, params = {}) {
-  const requestBody = {
-    jsonrpc: "2.0",
-    id: randomUUID(),
-    method: method,
-    params: params,
-  };
+  /**
+   * Makes a JSON-RPC request to the MCP server
+   * @param {string} method - The method name to call
+   * @param {Object} params - Parameters to send with the request
+   * @returns {Promise<any>} The result from the server
+   */
+  async makeRequest(method, params = {}) {
+    // Prepare the JSON-RPC request payload
+    const requestBody = {
+      jsonrpc: "2.0",
+      id: randomUUID(),
+      method: method,
+      params: params,
+    };
 
-  const headers = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/event-stream",
-  };
+    // Set up HTTP headers
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    };
 
-  // Add session ID header if we have one
-  if (this.sessionId) {
-    headers[SESSION_ID_HEADER_NAME] = this.sessionId;
-  }
-
-  try {
-    console.log('🌐 Making request to:', this.serverUrl);
-    console.log('📝 Request method:', method);
-    console.log('📋 Request headers:', headers);
-    console.log('📄 Request body:', JSON.stringify(requestBody, null, 2));
-
-    const response = await fetch(this.serverUrl, {
-      method: "POST",
-      headers: headers,
-      body: JSON.stringify(requestBody),
-    });
-
-    console.log('📨 Response status:', response.status);
-    console.log('📨 Response headers:', Object.fromEntries(response.headers.entries()));
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Response error body:', errorText);
-      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+    // Include session ID in headers if available
+    if (this.sessionId) {
+      headers[SESSION_ID_HEADER_NAME] = this.sessionId;
     }
 
-    // Extract session ID from response headers if available
+    try {
+      // Log request details for debugging
+      this.logRequestDetails(method, headers, requestBody);
+
+      // Make the HTTP request
+      const response = await fetch(this.serverUrl, {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(requestBody),
+      });
+
+      // Log response details
+      this.logResponseDetails(response);
+
+      // Check for HTTP errors
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ Response error body:", errorText);
+        throw new Error(
+          `HTTP error! status: ${response.status}, body: ${errorText}`
+        );
+      }
+
+      // Handle session management
+      this.handleSessionFromResponse(response);
+
+      // Get response text
+      const responseText = await response.text();
+      console.log("📄 Raw response:", responseText);
+
+      // Parse and return the response
+      return this.parseResponse(responseText);
+    } catch (error) {
+      console.error("❌ MCP request failed:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Logs request details for debugging
+   */
+  logRequestDetails(method, headers, requestBody) {
+    console.log("🌐 Making request to:", this.serverUrl);
+    console.log("📝 Request method:", method);
+    console.log("📋 Request headers:", headers);
+    console.log("📄 Request body:", JSON.stringify(requestBody, null, 2));
+  }
+
+  /**
+   * Logs response details for debugging
+   */
+  logResponseDetails(response) {
+    console.log("📨 Response status:", response.status);
+    console.log(
+      "📨 Response headers:",
+      Object.fromEntries(response.headers.entries())
+    );
+  }
+
+  /**
+   * Extracts and stores session ID from response headers
+   */
+  handleSessionFromResponse(response) {
     const responseSessionId = response.headers.get(SESSION_ID_HEADER_NAME);
     if (responseSessionId && !this.sessionId) {
       this.sessionId = responseSessionId;
       console.log(`📋 Session ID established: ${this.sessionId}`);
     }
+  }
 
-    const responseText = await response.text();
-    console.log('📄 Raw response:', responseText);
+  /**
+   * Parses the response text based on content type
+   * @param {string} responseText - Raw response text
+   * @returns {any} Parsed response data
+   */
+  parseResponse(responseText) {
+    console.log("🔍 Parsing response of length:", responseText.length);
+    console.log("🔍 Response starts with:", responseText.substring(0, 100));
 
-    // Check if response is SSE format
-    if (responseText.startsWith('event:') || responseText.includes('data:')) {
-      console.log('📡 Detected SSE response, parsing...');
+    // Check if response is Server-Sent Events format
+    if (this.isSSEResponse(responseText)) {
+      console.log("📡 Detected SSE response, parsing...");
       return this.parseSSEResponse(responseText);
     }
 
-    // Try to parse as JSON
-    let responseData;
-    try {
-      responseData = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error('❌ Failed to parse JSON response:', parseError);
-      throw new Error(`Invalid JSON response: ${responseText}`);
+    // Parse as JSON response
+    return this.parseJSONResponse(responseText);
+  }
+
+  /**
+   * Checks if response is in SSE format
+   */
+  isSSEResponse(responseText) {
+    const isSSE =
+      responseText.startsWith("event:") ||
+      responseText.includes("data:") ||
+      responseText.includes("event:");
+    console.log("🔍 Is SSE response:", isSSE);
+    return isSSE;
+  }
+
+  /**
+   * Parses Server-Sent Events response
+   * @param {string} responseText - Raw SSE response text
+   * @returns {any} Parsed result data
+   */
+  parseSSEResponse(responseText) {
+    console.log("📡 Parsing SSE response...");
+
+    const lines = responseText.split("\n");
+    let result = null;
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const dataStr = line.substring(6); // Remove 'data: ' prefix
+        console.log("📡 Found data line:", dataStr);
+
+        if (dataStr.trim() === "[DONE]") {
+          break;
+        }
+
+        try {
+          const data = JSON.parse(dataStr);
+          if (data.result) {
+            result = data.result;
+          }
+        } catch (e) {
+          console.warn("⚠️ Failed to parse SSE data line:", dataStr, e);
+        }
+      }
     }
 
+    return result;
+  }
+
+  /**
+   * Parses JSON response and handles errors
+   * @param {string} responseText - Raw JSON response text
+   * @returns {any} Parsed result data
+   */
+  parseJSONResponse(responseText) {
+    console.log("📄 Parsing as JSON response...");
+
+    let responseData;
+
+    try {
+      responseData = JSON.parse(responseText);
+      console.log("✅ Successfully parsed JSON:", responseData);
+    } catch (parseError) {
+      console.error("❌ Failed to parse JSON response:", parseError);
+      console.error("❌ Raw response was:", responseText);
+      throw new Error(
+        `Invalid JSON response: ${responseText.substring(0, 200)}...`
+      );
+    }
+
+    // Check for JSON-RPC errors
     if (responseData.error) {
+      console.error("❌ JSON-RPC error:", responseData.error);
       throw new Error(`MCP Error: ${JSON.stringify(responseData.error)}`);
     }
 
+    console.log("✅ Returning result:", responseData.result);
     return responseData.result;
-  } catch (error) {
-    console.error("❌ MCP request failed:", error);
-    throw error;
   }
-}
-
-parseSSEResponse(sseText) {
-  const lines = sseText.split('\n');
-  let data = '';
-  
-  for (const line of lines) {
-    if (line.startsWith('data: ')) {
-      data += line.substring(6);
-    }
-  }
-  
-  if (data) {
-    try {
-      return JSON.parse(data);
-    } catch (error) {
-      console.error('❌ Failed to parse SSE data as JSON:', error);
-      return { raw: data };
-    }
-  }
-  
-  return { raw: sseText };
-}
 
   async initialize() {
     try {
@@ -284,7 +379,10 @@ const mcpToolImplementations = {
   get_internship_opportunity_list: traceable(
     async (params) => {
       try {
-        const result = await mcpClient.callTool("get_internship_opportunity_list", params);
+        const result = await mcpClient.callTool(
+          "get_internship_opportunity_list",
+          params
+        );
         return (
           result.content[0]?.text ||
           "Internship opportunity list retrieved successfully"
@@ -294,6 +392,24 @@ const mcpToolImplementations = {
       }
     },
     { name: "get_internship_opportunity_list", run_type: "tool" }
+  ),
+
+  get_company_project_list: traceable(
+    async (params) => {
+      try {
+        const result = await mcpClient.callTool(
+          "get_company_project_list",
+          params
+        );
+        return (
+          result.content[0]?.text ||
+          "Company project list retrieved successfully"
+        );
+      } catch (error) {
+        return `Error retrieving Company project list: ${error.message}`;
+      }
+    },
+    { name: "get_company_project_list", run_type: "tool" }
   ),
 
   shortlist_intern: traceable(
@@ -593,49 +709,98 @@ You have access to these tools:
 - get_candidate_list: Search and filter candidates by various criteria (skills, start dates, duration, projects, career fields, location, etc.)
 - get_career_field_list: Get available career fields in the system
 - get_internship_opportunity_list: Get available internship opportunities
+- get_company_project_list: Get available company projects
 - shortlist_intern: Shortlist candidates for future reference and consideration
 
-TOOL USAGE GUIDELINES:
+CORE PRINCIPLES:
+- Be precise and efficient in tool usage
+- Always match user intent accurately
+- Handle multiple criteria combinations gracefully
+- Provide clear feedback on search results
+- Use minimum necessary tool calls
 
-1. FOR SHORTLISTING OPERATIONS:
-   - When users ask to "shortlist intern with ID X" or similar direct shortlisting requests
-   - ONLY call shortlist_intern with the provided intern ID
-   - Do NOT call get_candidate_list or other tools first
-   - Example: "Shortlist intern with ID 1398" → Call shortlist_intern with internId: "1398"
+TOOL USAGE DECISION TREE:
 
-2. FOR CAREER FIELD SEARCHES:
-   - When users ask for candidates by career field NAME (like "Business", "Engineering", "Marketing")
-   - FIRST call get_career_field_list to get all available career fields
-   - Find the career field ID that matches the requested field name
-   - THEN call get_candidate_list with the correct careerFieldIds parameter
-   - Examples:
-     * "Show me candidates in Business field" → First get career fields, find Business ID, then get candidates
-     * "Find candidates interested in Software Engineering" → First get career fields, find Software Engineering ID, then get candidates
-  
-3. FOR INTERNSHIP OPPORTUNITIES SEARCHES:
-   - When users ask for candidates by internship opportunity (like "Data science", "Engineering intern")
-   - FIRST call get_internship_opportunity_list to get all available internship opportunity fields
-   - Find the internship opportunity ID that matches the requested field name
-   - THEN call get_candidate_list with the correct internshipOpportunityId parameter
-   - Examples:
-     * "Show me candidates for data science internship opportunity" → First get internship opportunity, find internship opportunity id, then get candidates
+1. SHORTLISTING OPERATIONS (Direct Action):
+   Keywords: "shortlist", "add to shortlist", "shortlist intern", "save candidate"
+   Action: Call shortlist_intern ONLY with provided intern ID
+   Examples:
+   - "Shortlist intern with ID 1398" → shortlist_intern(internId: "1398")
+   - "Add candidate 2045 to shortlist" → shortlist_intern(internId: "2045")
+   - "Save intern 3399" → shortlist_intern(internId: "3399")
 
-4. FOR DIRECT CANDIDATE SEARCHES:
-   - When users provide specific criteria (skills, dates, etc.) without career field names
-   - Call get_candidate_list directly with the appropriate parameters
-   - Examples:
-     * "Show me candidates with JavaScript skills" → Call get_candidate_list directly with skillIds
-     * "Find candidates available in January 2024" → Call get_candidate_list directly with preferredStartMonths
+2. CAREER FIELD-BASED SEARCHES (Two-Step Process):
+   Keywords: "career field", "field", "domain", "area", field names like "Business", "Engineering", "Marketing", "Data Science", "Finance"
+   Process: get_career_field_list → find matching ID → get_candidate_list
+   Examples:
+   - "Show candidates in Engineering field" → Get career fields → Find Engineering ID → Get candidates
+   - "Find Business domain candidates" → Get career fields → Find Business ID → Get candidates
+   - "Candidates interested in Data Science field" → Get career fields → Find Data Science ID → Get candidates
 
-5. FOR CAREER FIELD INFORMATION:
-   - When users ask about available career fields
-   - Call get_career_field_list directly
+3. PROJECT-BASED SEARCHES (Two-Step Process):
+   Keywords: "project", "work on", "working in", project names like "App development", "Web development", "Backend", "Frontend"
+   Process: get_company_project_list → find matching ID → get_candidate_list
+   Examples:
+   - "Candidates for app development project" → Get projects → Find app development ID → Get candidates
+   - "Who wants to work on backend project" → Get projects → Find backend ID → Get candidates
+   - "Show me candidates for web development" → Get projects → Find web development ID → Get candidates
 
-6. FOR INTERNSHIP OPPORTUNITY INFORMATION:
-   - When users ask about available INTERNSHIP OPPORTUNITIES
-   - Call get_internship_opportunity_list directly   
+4. INTERNSHIP OPPORTUNITY-BASED SEARCHES (Two-Step Process):
+   Keywords: "internship opportunity", "internship role", "intern position", role names like "Software Engineer Intern", "Marketing Intern"
+   Process: get_internship_opportunity_list → find matching ID → get_candidate_list
+   Examples:
+   - "Candidates for software engineering internship" → Get opportunities → Find software engineering ID → Get candidates
+   - "Marketing intern candidates" → Get opportunities → Find marketing intern ID → Get candidates
+   - "Data science internship applicants" → Get opportunities → Find data science internship ID → Get candidates
 
-IMPORTANT: Use the minimum number of tool calls necessary. Don't gather extra information unless specifically requested by the user.`;
+5. DIRECT CANDIDATE SEARCHES (Single-Step Process):
+   Keywords: Skills, technologies, dates, locations, universities, experience, duration
+   Action: Call get_candidate_list directly with appropriate parameters
+   Examples:
+   - "JavaScript developers" → get_candidate_list(skillIds: [JavaScript_ID])
+   - "Candidates available in January 2024" → get_candidate_list(preferredStartMonths: ["01/2024"])
+   - "3-month internship candidates" → get_candidate_list(durations: ["3 months"])
+   - "Candidates from MIT" → get_candidate_list(universityName: "MIT")
+
+6. INFORMATION-ONLY REQUESTS (Single-Step Process):
+   - "What career fields are available?" → get_career_field_list()
+   - "Show all internship opportunities" → get_internship_opportunity_list()
+   - "List company projects" → get_company_project_list()
+
+COMPLEX SEARCH COMBINATIONS:
+Handle multiple criteria by combining parameters in single get_candidate_list call:
+
+Examples:
+- "JavaScript candidates in Engineering field available in January"
+  → Get career fields → Find Engineering ID → get_candidate_list(careerFieldIds: [Engineering_ID], skillIds: [JavaScript_ID], preferredStartMonths: ["01/2024"])
+
+- "Business field candidates for app development project with 6-month duration"
+  → Get career fields → Get projects → get_candidate_list(careerFieldIds: [Business_ID], projectIds: [App_Dev_ID], durations: ["6 months"])
+
+FUZZY MATCHING STRATEGY:
+When searching for IDs by name:
+- Use case-insensitive partial matching
+- Try variations (e.g., "Software Engineering" matches "Software Engineer", "Engineering - Software")
+- If exact match not found, suggest closest matches
+- Handle common abbreviations (e.g., "JS" for "JavaScript", "ML" for "Machine Learning")
+
+ERROR HANDLING:
+- If no matching career field/project/opportunity found, list available options
+- If search returns no candidates, suggest broader criteria
+- If user provides invalid intern ID for shortlisting, inform them clearly
+
+RESPONSE FORMATTING:
+- Always summarize what search was performed
+- Show relevant statistics (total found, filters applied)
+- Present results in clear, scannable format
+- Include next steps or suggestions when appropriate
+
+PAGINATION HANDLING:
+- Use pageNumber and perPage parameters when dealing with large result sets
+- Inform users about pagination options
+- Default to reasonable page sizes (10-20 results)
+
+REMEMBER: The goal is to help users find the right candidates efficiently. Be proactive in suggesting refinements if searches are too broad or too narrow.`;
 
             const initialState = {
               messages: [

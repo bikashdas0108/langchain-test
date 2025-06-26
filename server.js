@@ -189,6 +189,27 @@ export class MCPServer {
       return {
         tools: [
           {
+            name: "get_company_project_list",
+            description:
+              "Retrieve a list of all available company projects in the system. This provides access to project listings that can be used for filtering candidates or understanding available project opportunities.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                perPage: {
+                  type: "string",
+                  description: "Number of results to return per page",
+                  default: "10",
+                },
+                pageNumber: {
+                  type: "string",
+                  description: "Page number for pagination (starts from 1)",
+                  default: "1",
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+          {
             name: "get_internship_opportunity_list",
             description:
               "Retrieve a list of all available internship opportunities (IOs) in the system. This provides access to internship listings with career field information included.",
@@ -383,6 +404,8 @@ export class MCPServer {
             return await this.getCareerFieldList(args);
           case "get_internship_opportunity_list":
             return await this.getIoList(args);
+          case "get_company_project_list":
+            return await this.getCompanyProjectList(args);
           case "shortlist_intern":
             return await this.shortListIntern(args);
           default:
@@ -546,6 +569,65 @@ ${JSON.stringify(ioList.data?.payload, null, 2)}`,
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to retrieve internship opportunities list: ${error.message}`
+      );
+    }
+  }
+
+  async getCompanyProjectList(args) {
+    console.log('🚀 ~ MCPServer ~ getCompanyProjectList ~ args:', args)
+    try {
+      // Build query parameters
+      const queryParams = new URLSearchParams();
+
+      if (args.perPage) {
+        queryParams.append("perPage", args.perPage);
+      }
+
+      if (args.pageNumber) {
+        queryParams.append("pageNumber", args.pageNumber);
+      }
+
+      // Construct the URL with query parameters
+      const queryString = queryParams.toString();
+      const url = queryString
+        ? `/common-services/company-project/list?${queryString}`
+        : `/common-services/company-project/list`;
+
+      const projectList = await makeApiCall(url, "GET", {});
+
+      // Format the response for better readability
+      const projectListCount = projectList.data?.payload?.length || 0;
+
+      // Build query parameters display
+      const queryParamsDisplay = [];
+      queryParamsDisplay.push(`Type: ${args.type || "global"}`);
+
+      if (args.perPage) {
+        queryParamsDisplay.push(`Per Page: ${args.perPage}`);
+      }
+
+      if (args.pageNumber) {
+        queryParamsDisplay.push(`Page Number: ${args.pageNumber}`);
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${projectListCount} projects:
+
+**Query Parameters:**
+${queryParamsDisplay.map((param) => `- ${param}`).join("\n")}
+
+**Results:**
+${JSON.stringify(projectList.data?.payload, null, 2)}`,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to retrieve project list: ${error.message}`
       );
     }
   }
