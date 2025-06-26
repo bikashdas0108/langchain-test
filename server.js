@@ -467,7 +467,7 @@ export class MCPServer {
         list: candidates.data?.payload?.list?.map((item) => ({
           full_name: item.full_name,
           phone_number: item.phone_number,
-          intern_id: item.application?.intern_id,
+          intern_id: item.intern_id,
           application: {
             application_id: item.application?.application_id,
             application_status: item.application?.application_status,
