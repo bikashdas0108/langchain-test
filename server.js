@@ -212,7 +212,7 @@ export class MCPServer {
           {
             name: "get_internship_opportunity_list",
             description:
-              "Retrieve a list of all available internship opportunities (IOs) in the system. This provides access to internship listings with career field information included.",
+              "Retrieve a list of all available internship opportunities (IOs) in the system. This provides access to internship listings with career field information included. Internship opportunities (also known as IO) are also called as Internship Requirements (IR)",
             inputSchema: {
               type: "object",
               properties: {
@@ -229,7 +229,7 @@ export class MCPServer {
           {
             name: "get_candidate_list",
             description:
-              "Retrieve a filtered list of candidates based on various criteria including skills, preferred start months, duration, projects, career fields, and more. This provides comprehensive candidate browsing capabilities.",
+              "Retrieve a filtered list of candidates based on various criteria including skills, preferred start months, duration, projects, career fields(CF), and more. This provides comprehensive candidate browsing capabilities.",
             inputSchema: {
               type: "object",
               properties: {
@@ -355,14 +355,14 @@ export class MCPServer {
           {
             name: "get_career_field_list",
             description:
-              "Retrieve a list of all available career fields in the system. This can be used to get career field IDs and names for filtering candidates or understanding available career options.",
+              "Retrieve a list of all available career fields(CF) in the system. This can be used to get career field IDs and names for filtering candidates or understanding available career options.",
             inputSchema: {
               type: "object",
               properties: {
                 type: {
                   type: "string",
                   description:
-                    'Type of career fields to retrieve (e.g., "global")',
+                    'Type of career fields(CF) to retrieve (e.g., "global")',
                   default: "global",
                 },
               },
