@@ -466,6 +466,22 @@ export class MCPServer {
       const totalCandidates = candidates.data?.length || 0;
       const pagination = candidates.pagination || {};
 
+      const updatedCandidates = {
+        count: candidates.data?.payload?.count,
+        list: candidates.data?.payload?.list?.map((item) => ({
+          full_name: item.full_name,
+          phone_number: item.phone_number,
+          application: {
+            application_id: item.application?.application_id,
+            application_status: item.application?.application_status,
+            duration: item.application?.duration,
+            career_field_selected: item.application?.career_field_selected,
+            hours_per_week: item.application?.hours_per_week,
+            preferred_internship_start_date:
+              item.application?.preferred_internship_start_date,
+          },
+        })),
+      };
       return {
         content: [
           {
@@ -497,7 +513,7 @@ export class MCPServer {
 - Total Records: ${pagination.total_records || "N/A"}
 
 **Results:**
-${JSON.stringify(candidates, null, 2)}`,
+${JSON.stringify(updatedCandidates, null, 2)}`,
           },
         ],
       };
@@ -518,7 +534,10 @@ ${JSON.stringify(candidates, null, 2)}`,
       );
       // Format the response for better readability
       const careerFieldCount = careerField.data?.payload?.length || 0;
-
+      const updatedCFs = careerField.data?.payload?.map((item) => ({
+        career_field_id: item.career_field_id,
+        career_field_name: item.career_field_name,
+      }));
       return {
         content: [
           {
@@ -529,7 +548,7 @@ ${JSON.stringify(candidates, null, 2)}`,
 - Type: ${args.type || "global"}
 
 **Results:**
-${JSON.stringify(careerField.data?.payload, null, 2)}`,
+${JSON.stringify(updatedCFs, null, 2)}`,
           },
         ],
       };
@@ -550,7 +569,12 @@ ${JSON.stringify(careerField.data?.payload, null, 2)}`,
       );
       // Format the response for better readability
       const ioListCount = ioList.data?.payload?.length || 0;
-
+      const updatedIoList = ioList.data?.payload?.map((item) => ({
+        internship_opportunity_id: item.internship_opportunity_id,
+        internship_opportunity_name: item.internship_opportunity_name,
+        is_active: item.is_active,
+        career_field_id: item.career_field_id,
+      }));
       return {
         content: [
           {
@@ -561,7 +585,7 @@ ${JSON.stringify(careerField.data?.payload, null, 2)}`,
 - Type: ${args.type || "global"}
 
 **Results:**
-${JSON.stringify(ioList.data?.payload, null, 2)}`,
+${JSON.stringify(updatedIoList, null, 2)}`,
           },
         ],
       };
@@ -574,7 +598,7 @@ ${JSON.stringify(ioList.data?.payload, null, 2)}`,
   }
 
   async getCompanyProjectList(args) {
-    console.log('🚀 ~ MCPServer ~ getCompanyProjectList ~ args:', args)
+    console.log("🚀 ~ MCPServer ~ getCompanyProjectList ~ args:", args);
     try {
       // Build query parameters
       const queryParams = new URLSearchParams();
@@ -597,6 +621,10 @@ ${JSON.stringify(ioList.data?.payload, null, 2)}`,
 
       // Format the response for better readability
       const projectListCount = projectList.data?.payload?.length || 0;
+      const updatedProjectList = projectList.data?.payload?.map((item) => ({
+        project_id: item.project_id,
+        project_name: item.project_name,
+      }));
 
       // Build query parameters display
       const queryParamsDisplay = [];
@@ -620,7 +648,7 @@ ${JSON.stringify(ioList.data?.payload, null, 2)}`,
 ${queryParamsDisplay.map((param) => `- ${param}`).join("\n")}
 
 **Results:**
-${JSON.stringify(projectList.data?.payload, null, 2)}`,
+${JSON.stringify(updatedProjectList, null, 2)}`,
           },
         ],
       };

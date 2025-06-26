@@ -168,7 +168,7 @@ class MCPHTTPClient {
     for (const line of lines) {
       if (line.startsWith("data: ")) {
         const dataStr = line.substring(6); // Remove 'data: ' prefix
-        console.log("📡 Found data line:", dataStr);
+        // console.log("📡 Found data line:", dataStr);
 
         if (dataStr.trim() === "[DONE]") {
           break;
