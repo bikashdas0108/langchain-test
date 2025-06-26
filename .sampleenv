@@ -5,5 +5,6 @@ LANGSMITH_ENDPOINT="https://api.smith.langchain.com"
 LANGSMITH_API_KEY="lsv2_pt_ae6c07f61_6219f7274a"
 LANGSMITH_PROJECT="pr-dshdhdehl-26"
 API_BASE_URL=http://localhost:4000
+MCP_SERVER_URL=http://localhost:3001/mcp
 
-PORT=3001
+PORT = 3001
