@@ -233,7 +233,7 @@ export class MCPServer {
             inputSchema: {
               type: "object",
               properties: {
-                skillIds: {
+                skill_ids: {
                   type: "array",
                   items: {
                     type: "string",
@@ -242,7 +242,7 @@ export class MCPServer {
                     "Array of skill IDs to filter candidates by their skills",
                   default: [],
                 },
-                preferredStartMonths: {
+                preferred_start_months: {
                   type: "array",
                   items: {
                     type: "string",
@@ -260,7 +260,7 @@ export class MCPServer {
                   description: "Array of internship durations to filter by",
                   default: [],
                 },
-                projectIds: {
+                project_ids: {
                   type: "array",
                   items: {
                     type: "string",
@@ -269,7 +269,7 @@ export class MCPServer {
                     "Array of project IDs to filter candidates by their projects",
                   default: [],
                 },
-                careerFieldIds: {
+                career_field_ids: {
                   type: "array",
                   items: {
                     type: "string",
@@ -278,7 +278,7 @@ export class MCPServer {
                     "Array of career field IDs to filter candidates by their career interests",
                   default: [],
                 },
-                internUuids: {
+                intern_uuids: {
                   type: "array",
                   items: {
                     type: "string",
@@ -292,17 +292,17 @@ export class MCPServer {
                     "Boolean flag to return only filter options without candidate data",
                   default: false,
                 },
-                perPage: {
+                per_page: {
                   type: "string",
                   description: "Number of results to return per page",
                   default: "10",
                 },
-                pageNumber: {
+                page_number: {
                   type: "string",
                   description: "Page number for pagination (starts from 1)",
                   default: "1",
                 },
-                irIds: {
+                ir_ids: {
                   type: "array",
                   items: {
                     type: "string",
@@ -311,23 +311,23 @@ export class MCPServer {
                     "Array of IR (Internal Recruiter) IDs to filter by",
                   default: [],
                 },
-                careerSkillName: {
+                career_skill_name: {
                   type: "string",
                   description: "Search by career skill name",
                 },
-                wantToLearnCareerFieldSkillName: {
+                want_to_learn_career_field_skill_name: {
                   type: "string",
                   description: "Search by skills the candidate wants to learn",
                 },
-                projectsDescription: {
+                projects_description: {
                   type: "string",
                   description: "Search within project descriptions",
                 },
-                aboutMe: {
+                about_me: {
                   type: "string",
                   description: 'Search within candidate "about me" sections',
                 },
-                countryIds: {
+                country_ids: {
                   type: "array",
                   items: {
                     type: "string",
@@ -336,11 +336,11 @@ export class MCPServer {
                     "Array of country IDs to filter candidates by location",
                   default: [],
                 },
-                universityName: {
+                university_name: {
                   type: "string",
                   description: "Search by university name",
                 },
-                pastExperience: {
+                past_experience: {
                   type: "string",
                   description: "Search within past experience descriptions",
                 },
@@ -598,7 +598,6 @@ ${JSON.stringify(updatedIoList, null, 2)}`,
   }
 
   async getCompanyProjectList(args) {
-    console.log("🚀 ~ MCPServer ~ getCompanyProjectList ~ args:", args);
     try {
       // Build query parameters
       const queryParams = new URLSearchParams();
