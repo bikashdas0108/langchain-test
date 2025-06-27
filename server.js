@@ -431,28 +431,28 @@ export class MCPServer {
       };
 
       // Add query params conditionally
-      addIfArray("skill_ids", args.skillIds);
-      addIfArray("preferred_start_months", args.preferredStartMonths);
+      addIfArray("skill_ids", args.skill_ids);
+      addIfArray("preferred_start_months", args.preferred_start_months);
       addIfArray("durations", args.durations);
-      addIfArray("project_ids", args.projectIds);
-      addIfArray("career_field_ids", args.careerFieldIds);
-      addIfArray("intern_uuids", args.internUuids);
-      addIfArray("ir_ids", args.irIds);
-      addIfArray("country_ids", args.countryIds);
+      addIfArray("project_ids", args.project_ids);
+      addIfArray("career_field_ids", args.career_field_ids);
+      addIfArray("intern_uuids", args.intern_uuids);
+      addIfArray("ir_ids", args.ir_ids);
+      addIfArray("country_ids", args.country_ids);
 
       addIfTruthy("onlyFilters", args.onlyFilters);
-      addIfTruthy("per_page", args.perPage || "10");
-      addIfTruthy("page_number", args.pageNumber || "1");
+      addIfTruthy("per_page", args.per_page || "10");
+      addIfTruthy("page_number", args.page_number || "1");
 
-      addIfTruthy("career_skill_name", args.careerSkillName);
+      addIfTruthy("career_skill_name", args.career_skill_name);
       addIfTruthy(
         "want_to_learn_career_field_skill_name",
-        args.wantToLearnCareerFieldSkillName
+        args.want_to_learn_career_field_skill_name
       );
-      addIfTruthy("projects_description", args.projectsDescription);
-      addIfTruthy("about_me", args.aboutMe);
-      addIfTruthy("university_name", args.universityName);
-      addIfTruthy("past_experience", args.pastExperience);
+      addIfTruthy("projects_description", args.projects_description);
+      addIfTruthy("about_me", args.about_me);
+      addIfTruthy("university_name", args.university_name);
+      addIfTruthy("past_experience", args.past_experience);
       addIfTruthy("portfolio", args.portfolio);
 
       const queryString = objectToQueryString(candidateQuery);
